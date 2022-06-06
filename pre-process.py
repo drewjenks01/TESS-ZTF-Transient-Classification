@@ -10,8 +10,8 @@ import matplotlib.pyplot as plt
 import pickle as pkl
 import os
 
-filepath='/Users/drewj/Documents/Urops/Muthukrishna/Tess-transient-classification/data/'
-lc_files=next(walk('/Users/drewj/Documents//Urops/Muthukrishna/Tess-transient-classification/data/light_curves_fausnaugh'), (None, None, []))[2]
+filepath='/Users/drewj/Documents/Urops/Muthukrishna/data/'
+lc_files=next(walk('/Users/drewj/Documents//Urops/Muthukrishna/data/light_curves_fausnaugh'), (None, None, []))[2]
 
 
 def read_data(save=False):
@@ -85,7 +85,7 @@ def plot_data(data):
 
 def main():
 
-
+    read_data()
     data=load_data()[2]
     ex=data[0]
     print(ex.loc[:,'BTJD'])
