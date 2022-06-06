@@ -69,6 +69,7 @@ def load_data():
 
 
 
+
 def plot_data(data):
     x=data.loc[:,"BTJD"]
     y=data.loc[:,"cts"]
@@ -87,7 +88,7 @@ def main():
 
     data=load_data()[2]
     ex=data[0]
-    
+    print(ex.loc[:,'BTJD'])
 
 
 
