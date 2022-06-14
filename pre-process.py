@@ -14,7 +14,7 @@ import math
 from tqdm import tqdm
 
 filepath='/Users/drewj/Documents/Urops/Muthukrishna/data/'
-lc_files=next(walk('/Users/drewj/Documents//Urops/Muthukrishna/data/light_curves_fausnaugh'), (None, None, []))[2]
+lc_files=next(walk('/Users/drewj/Documents//Urops/Muthukrishna/data/processed_curves'), (None, None, []))[2]
 
 
 def read_data(save=True):
@@ -39,7 +39,7 @@ def read_data(save=True):
     #TODO: make into a set for O(1) accessing?
     light_curves=[]
     for f in tqdm(lc_files):
-        df=pd.read_csv(filepath+'light_curves_fausnaugh/'+f,delim_whitespace=True)
+        df=pd.read_csv(filepath+'processed_curves/'+f)
         df['filename'] = f
         light_curves.append(df)
 
@@ -87,7 +87,7 @@ def bin_data(data,save=True):
     for lc in tqdm(data):
 
         #extract time and brightness vals
-        time=lc.loc[:,'BTJD'].to_numpy()
+        time=lc.loc[:,'relative_time'].to_numpy()
         flux=lc.loc[:,'cts'].to_numpy()
 
 
@@ -195,8 +195,8 @@ def load_augmented():
 
 
 def plot_data(data):
-    x=data[0][:28]
-    y=data[1][:28]
+    x=data[0][:14]
+    y=data[1][:14]
 
 
     plt.plot(x,y)
@@ -209,24 +209,23 @@ def plot_data(data):
 
 def main():
 
+    #read_data()
     #load saved data
     data=load_data()
     data=data['light_curves']
+    print(len(data),)
 
-    # x=data[92].loc[:,'BTJD']
-    # y=data[92].loc[:,'cts']
-    # print(y)
-    # name=data[92].loc[:,'filename'][0]
-    # print(name)
-
-    plt.plot(x,y)
-    plt.show()
+ 
 
     #bin_data(data)
 
     binned_data=load_binned()
+
+   # augment_binned_data(binned_data)
     
     aug_data= load_augmented()
+
+    print(len(aug_data))
 
 
     lengths= [d[0].shape for d in binned_data]
@@ -236,11 +235,11 @@ def main():
     print(Counter(lengths))
     print(Counter(aug_lengths))
 
-    # for lc in binned_data[92]:
+    for lc in aug_data[:100]:
+       # print(lc)
+        plot_data(lc)
 
-    plot_data(binned_data[92])
-
-    print(binned_data[92])
+    #print(binned_data[92])
 
 
    # print(binned_data)
