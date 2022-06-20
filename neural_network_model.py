@@ -4,12 +4,11 @@ from tensorflow import keras
 from tensorflow.python.keras import layers, Input, Model
 from tensorflow.python.keras.layers import Dense, GRU, Masking, TimeDistributed, RepeatVector
 from tensorflow.python.keras.metrics import Mean
-from keras.optimizers import adam_v2
-
 
 """
 Questions:
-    -TimeDistributed not working?
+    - hyperparam choices
+    - repeat layer?
 """
 
 
@@ -34,13 +33,13 @@ class RVAE(keras.Model):
         self.enc_input_shape = (2, 30)  # X.shape = (..., 29, ..)
 
         # set the dimension of the latent vector
-        self.latent_dim =
+        self.latent_dim = 5
 
         # input to first enc, second dec layer
-        self.gru_one =
+        self.gru_one = 100
 
         # input to first dec, second enc layer
-        self.gru_two =
+        self.gru_two = 100
 
         # number of filters
         self.nfilts = 1
@@ -50,10 +49,8 @@ class RVAE(keras.Model):
         self.reconstruction_loss_tracker = Mean(name="reconstruction_loss")
         self.kl_loss_tracker = Mean(name="kl_loss")
 
-        #optimizer
-        self.optimizer = adam_v2.Adam(learning_rate=1e-4)
 
-    def encoder(self):
+    def build_encoder(self):
         """
         Builds encoder model
 
@@ -92,10 +89,16 @@ class RVAE(keras.Model):
 
         return encoder
 
-    def repeatLayer(self):
-        skip
+    def build_repeater(self):
+        # input layer
+        input = Input(shape=(self.latent_dim,))
 
-    def decoder(self):
+        # repeat layer
+        repeater = RepeatVector(30)(input)
+
+        return repeater
+
+    def build_decoder(self):
         """
         Builds decoder model
 
@@ -118,10 +121,11 @@ class RVAE(keras.Model):
         output = TimeDistributed(Dense(self.nfilts, activation='tanh'))(x)
 
         # define encoder
-        decoder = Model([input, ], x, name='decoder')
+        decoder = Model([input, ], output, name='decoder')
         decoder.summary()
 
         return decoder
+
 
     @property
     def metrics(self):
