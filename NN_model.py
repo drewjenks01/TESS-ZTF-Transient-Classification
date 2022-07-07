@@ -3,29 +3,38 @@
 import keras.backend as K
 import numpy as np
 import tensorflow as tf
-from keras import Input, Model, layers
+from keras import Input, Model
 from keras.callbacks import EarlyStopping
-from keras.backend import random_normal
-from keras.layers import (InputLayer, GRU, Dense, Masking, RepeatVector, TimeDistributed, Lambda,
-                          concatenate, BatchNormalization,Reshape,Layer)
+from keras.layers import (
+    GRU, Dense, Masking, RepeatVector, TimeDistributed, Lambda, concatenate)
 from keras.optimizers import adam_v2
-from keras import layers
-import tensorflow.python.keras.layers
 from keras.models import load_model
-#from keras.optimizers import Adam
-
 from pre_process import load_augmented, load_binned
 from tensorflow.python.framework.ops import disable_eager_execution
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 import sys
 from tcn import TCN
-print(tf.executing_eagerly())
+from tqdm import tqdm
+
 disable_eager_execution()
 """
-Questions:
-    - hyperparam choices
-    - repeat layer?
+To test:
+    - add *30 to recon loss
+    - lower latent dim
+    - masking correct val (close to 0) with mask 2
+    - LSTM, TCN
+
+Notes:
+    - old model structrue 2x faster
+
+Best model so far:
+    - 500 epochs
+    - 128 batch size
+    - latent dim= 20
+    - 150 units each
+    - 1e-3 LR
+    - 
 """
 
 
@@ -51,29 +60,29 @@ class RVAE:
                                       decay=0)
 
         # dimension of the input space for enc
-        self.enc_input_shape = (30, 2)  # X.shape = (..., 29, ..)
+        self.enc_input_shape = (30, self.num_feats)  # X.shape = (..., 29, ..)
 
         # set the dimension of the latent vector
-        self.latent_dim = 50
+        self.latent_dim = 20
 
         # input to first enc, second dec layer
-        self.gru_one = 150
+        self.gru_one = 100
 
         # input to first dec, second enc layer
-        self.gru_two = 150
+        self.gru_two = 100
 
         # load augmented data, split into input and outputs
         self.aug_data = load_augmented()
-        #should be all features besides time
-        self.aug_inp = self.aug_data.copy()[:,:,1:]
-        #should be only flux (...,30,1)
-        self.aug_out = self.aug_data.copy()[:,:,1:2]
+        # should be all features besides time
+        self.aug_inp = self.aug_data.copy()[:, :, 1:]
+        # should be only flux (...,30,1)
+        self.aug_out = self.aug_data.copy()[:, :, 1:2]
 
         # load binned
         self.binned_data = load_binned()
 
-        #test and train data
-        self.train_test_data= self.split_aug_data(self.aug_inp,self.aug_out)
+        # test and train data
+        self.train_test_data = self.split_aug_data(self.aug_inp, self.aug_out)
 
     def build_model(self):
         """
@@ -89,72 +98,69 @@ class RVAE:
         # input layer
         enc_input = Input(shape=self.enc_input_shape)
 
-        # time for concat
-        time = Input(shape=(30, 1))
-
         # masking layer to get rid of unwanted values
         mask = Masking(mask_value=0.0)(enc_input)
 
         # first recurrent layer
         x = GRU(self.gru_one, activation='tanh',
-                recurrent_activation='hard_sigmoid', return_sequences=True,name='gru1')(mask)
+                recurrent_activation='hard_sigmoid', return_sequences=True, name='gru1')(mask)
 
         # second recurrent layer
         encoded = GRU(self.gru_two, activation='tanh',
-                      recurrent_activation='hard_sigmoid', return_sequences=True,name='gru2')(x)
+                      recurrent_activation='hard_sigmoid', return_sequences=True, name='gru2')(x)
 
         # z mean output
         z_mean = GRU(
-            self.latent_dim, return_sequences=False, activation='linear',name='gru3')(encoded)
+            self.latent_dim, return_sequences=False, activation='linear', name='gru3')(encoded)
 
         # z variance output
         z_log_var = GRU(
-            self.latent_dim, return_sequences=False, activation='linear',name='gru4')(encoded)
+            self.latent_dim, return_sequences=False, activation='linear', name='gru4')(encoded)
 
         # sample output
         z = Lambda(self.sampling, output_shape=(
-            self.latent_dim,),name='lam')([z_mean, z_log_var])
-            
-        # BUILD REPEATER
-        print("building repeater...")
+            self.latent_dim,), name='lam')([z_mean, z_log_var])
+
+        # encoder
+        encoder = Model(enc_input, [z_mean, z_log_var, z], name='encoder')
+        encoder.summary()
+
+        # BUILD decoder
+        print("building decoder...")
 
         # repeat layer
+        dec_inp = Input(shape=(self.latent_dim,))
 
-        # concat layers (should be 30 x 11) TODO: remove?
+        repeater = RepeatVector(30, name='rep')(dec_inp)
 
-        repeater = RepeatVector(30,name='rep')(z)
-       # merged = concatenate([repeater, time], axis=-1)(repeater)
-
-
-        mask_two = Masking(mask_value = 0.0,name='m2')(repeater)
-
-        # BUILD DECODER
-        print("building decoder...")
+        # TODO: are zeros still even here?
+        #mask_two = Masking(mask_value=0.0, name='m2')(repeater)
 
         # first recurrent layer
         x = GRU(self.gru_two, activation='tanh',
-                recurrent_activation='hard_sigmoid', return_sequences=True,name='gru5')(mask_two)
+                recurrent_activation='hard_sigmoid', return_sequences=True, name='gru5')(dec_inp)
 
         # second recurrent layer
         x = GRU(self.gru_one, activation='tanh',
-                recurrent_activation='hard_sigmoid', return_sequences=True,name='gru6')(x)
+                recurrent_activation='hard_sigmoid', return_sequences=True, name='gru6')(x)
 
         # decoder output
         dec_output = TimeDistributed(
-            Dense(1, activation='tanh',input_shape= (None,1)),name='td')(x)
+            Dense(1, activation='tanh', input_shape=(None, 1)), name='td')(x)
 
-      
+        decoder = Model(dec_inp, dec_output, name='decoder')
+        decoder.summary()
 
         # BUILD MODEL
-        rvae = Model(enc_input, dec_output)
+        rvae = Model(enc_input, decoder(encoder(enc_input)[2]))
         rvae.summary()
 
-        for i, l in enumerate(rvae.layers):
-            print(f'layer {i}: {l}')
-            print(f'has input mask: {l.input_mask}')
-            print(f'has output mask: {l.output_mask}')
-
         # for i, l in enumerate(decoder.layers):
+        #     print(f'layer {i}: {l}')
+        #     print(f'has input mask: {l.input_mask}')
+        #     print(f'has output mask: {l.output_mask}')
+
+        # for i, l in enumerate(encoder.layers):
         #     print(f'layer {i}: {l}')
         #     print(f'has input mask: {l.input_mask}')
         #     print(f'has output mask: {l.output_mask}')
@@ -166,10 +172,10 @@ class RVAE:
         rvae.compile(optimizer=self.optimizer, loss=custom_loss)
 
         es = EarlyStopping(monitor='val_loss', min_delta=0, patience=50,
-                       verbose=0, mode='min', baseline=None,
-                       restore_best_weights=True)
+                           verbose=0, mode='min', baseline=None,
+                           restore_best_weights=True)
 
-        return rvae, enc_input, encoded, es
+        return rvae, encoder, es
 
     def sampling(self, samp_args):
         z_mean, z_log_sigma = samp_args
@@ -180,7 +186,7 @@ class RVAE:
         epsilon = K.random_normal(shape=(batch, dim))
         return z_mean + K.exp(0.5 * z_log_sigma) * epsilon
 
-    def customLoss(self,yTrue, yPred):
+    def customLoss(self, yTrue, yPred):
         """
         Custom loss which doesn't use the errors
         Parameters
@@ -196,28 +202,28 @@ class RVAE:
     def vae_loss(self, encoded_mean, encoded_log_sigma):
 
         kl_loss = - 0.5 * K.mean(1 + K.flatten(encoded_log_sigma) -
-                                 K.square(K.flatten(encoded_mean)) - K.exp(K.flatten(encoded_log_sigma)),axis=-1)
-    
+                                 K.square(K.flatten(encoded_mean)) - K.exp(K.flatten(encoded_log_sigma)), axis=-1)
+
        # @tf.function
+
         def lossFunction(yTrue, yPred):
            # reconstruction_loss = K.mean(K.square(yTrue[:, :, 1:(1+self.nfilts)] - yPred[:, :, :]))*30
-            reconstruction_loss =K.log(K.mean(K.square(yTrue - yPred)))
-                
+            reconstruction_loss = K.log(K.mean(K.square(yTrue - yPred)))
+
             # tf.print('rec: ',reconstruction_loss,output_stream=sys.stdout)
             # tf.print('kl: ', kl_loss,output_stream=sys.stdout)
-       
 
             return reconstruction_loss + kl_loss
 
         return lossFunction
 
     def split_aug_data(self, aug_inp, aug_out):
-        """Splits data into 2/3 training, 1/3 testing"""
+        """Splits data into 3/4 training, 1/4 testing"""
 
         print("Splitting data into train and test...")
 
         x_train, x_test, y_train, y_test = train_test_split(
-            aug_inp, aug_out, test_size=0.33)
+            aug_inp, aug_out, test_size=0.25)
 
         print('shape of aug_inp and x_train:', aug_inp.shape, x_train.shape)
         print('shape of aug_out and y_train:', aug_out.shape, y_train.shape)
@@ -228,51 +234,60 @@ class RVAE:
         print('saving model: ', name)
         model.save(self.filepath+name)
 
-    def get_encoder(self, input, encoded):
-        return Model(input, encoded)
+    def get_encoder(self):
+        enc = load_model(self.filepath+'model/encoder')
+        return enc
 
     def train_model(self, model, es):
         # fit model
-        train_inp=self.train_test_data[0]
-        train_out=self.train_test_data[2]
+        train_inp = self.train_test_data[0]
+        train_out = self.train_test_data[2]
 
         print('fitting model...')
         model.fit(train_inp, train_out, epochs=self.epochs, batch_size=self.batch_size,
-                  validation_split=0.2, verbose=1, callbacks=[es],shuffle=False)
+                  validation_split=0.2, verbose=1, callbacks=[es], shuffle=False)
 
         return model
 
-    def test_model(self,rvae=None):
+    def test_model(self, rvae=None):
 
-        test_inp=self.train_test_data[1]
-        test_inp = test_inp.reshape(-1,1,30,2)
-        test_out=self.train_test_data[3]
+        test_inp = self.train_test_data[1][:100]
+        test_inp = test_inp.reshape(-1, 1, 30, 2)
+        test_out = self.train_test_data[3][:100]
 
         # load model if none passed
         if not rvae:
             print('loading model for testing...')
-            rvae = load_model(self.filepath+'model/rvae', custom_objects={'sampling': self.sampling,
+            rvae = load_model(self.filepath+'model/best', custom_objects={'sampling': self.sampling,
                                                                           'lossFunction': self.customLoss})
         rvae.summary()
 
         # for each light curve, use model to predict decoded output
         # and plot against raw data to compare
-        print('plotting 20 predictions')
-        for i in range(10):
-           
-            #predicted flux
-            predicted = rvae.predict(test_inp[i])[0]
-           # print(predicted)
+       # avg_mse=()
+        print('predicting...')
+        for i in tqdm(range(len(test_inp))):
 
-            #if first prediction, print the prediction
-            if i==0:
+            # predicted flux
+            predicted = rvae.predict(test_inp[i])[0]
+
+            # if first prediction, print the prediction
+            if i == 0:
                 print('shape of predicted data: ', predicted.shape)
 
-            #if one of first 10 predictions, plot prediction vs true
-            if i<10:
+            # if one of first 10 predictions, plot prediction vs true
+            if i < 10:
                 self.plot_raw_pred(test_out[i], predicted, i)
 
-        print( "done plotting")
+            # calulcate mse
+            # mse = np.mean(np.square(predicted-test_out[i]))
+            # avg_mse.add(mse)
+            #print('mse of test '+str(i)+': ',mse)
+
+       # avg_mse=np.array(avg_mse)
+       # print('avg mse of'+str(len(test_inp))+ 'tests: ',np.mean(avg_mse))
+
+        print("done predicting")
 
     def plot_raw_pred(self, raw, pred, num):
 
@@ -288,9 +303,6 @@ class RVAE:
         pred_time = range(len(pred_flux))
         raw_time = pred_time
 
-        print("len of raw: ", len(raw_flux))
-        print("len of pred: ", len(pred_flux))
-
         # plot raw data
         ax1.plot(raw_time, raw_flux)
         ax1.set_title('true light curve')
@@ -303,6 +315,18 @@ class RVAE:
         fig.savefig(self.filepath+'plots/raw_vs_pred' +
                     str(num)+'.png', facecolor='white')
 
+    def plot_label_clusters(self):
+        # display a 2D plot of the light curves in the latent space
+        data = self.train_test_data[0]
+        labels = self.train_test_data[2]
+        encoder = self.get_encoder()
+        z_mean, _, _ = encoder.predict(data)
+        plt.figure(figsize=(12, 10))
+        plt.scatter(z_mean[:, 0], z_mean[:, 1], c=labels)
+        plt.colorbar()
+        plt.xlabel("z[0]")
+        plt.ylabel("z[1]")
+        plt.show()
 
 
 def main():
@@ -311,17 +335,18 @@ def main():
     rvae = RVAE()
 
     # # # build the model
-    model, inp, encoded, es = rvae.build_model()
+    model, encoder, es = rvae.build_model()
 
-    # # train model
+    # train model
     trained_rvae = rvae.train_model(model, es)
 
-    # # save model
+    # save model
     rvae.save_model(trained_rvae, 'model/rvae')
-   # rvae.save_model(encoder,'model/encoder')
+    rvae.save_model(encoder, 'model/encoder')
 
     # load model
-    model = rvae.test_model()
+    rvae.test_model()
+    rvae.plot_label_clusters()
 
 
 if __name__ == "__main__":
