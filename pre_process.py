@@ -33,7 +33,7 @@ def read_data(save=True):
     all_transients.columns = ['sector', 'ra', 'dec', 'mag at discovery', 'time of discovery', 'type of transient',
                               'classification', 'IAU name', 'discovery survey', 'cam', 'ccd', 'column', 'row']
 
-    print(len(all_transients.loc[:,'mag at discovery']))
+    print(len(all_transients.loc[:, 'mag at discovery']))
 
     # extracts data from confirmed supernovae file
     supernovae = pd.read_csv(
@@ -85,8 +85,8 @@ def bin_data(data, save=True, normalize=False):
     print("binning data...")
 
     binned_data = []
-    rmin=-1.0
-    rmax=1.0
+    rmin = -1.0
+    rmax = 1.0
 
     for lc in tqdm(data):
 
@@ -97,10 +97,10 @@ def bin_data(data, save=True, normalize=False):
 
        # print('f1:' ,flux)
 
-        # normalize b/w 0-1
+        # normalize b/w [-1,1]
         if normalize:
-            flux = 2* (flux-np.min(flux))/(np.max(flux)-np.min(flux)) -1
-            error =2* (error-np.min(error))/(np.max(error)-np.min(error)) -1
+            flux = 2 * (flux-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
+            error = 2 * (error-np.min(error))/(np.max(error)-np.min(error)) - 1
            # print('f2: ', flux)
 
         # starting time
@@ -235,6 +235,7 @@ def plot_binned_data(raw_data, binned_data):
     # show image
     plt.show()
 
+
 def concatFeature(raw_data, feat_name):
     """
     Takes in binned data and concats a new feature from data to binned data.
@@ -243,21 +244,20 @@ def concatFeature(raw_data, feat_name):
     binned_inp: (3857,13-30,n)
     binned_out: (3857,13-30,n+1)
     """
-    print("adding feature: ",feat_name," to data...")
-
+    print("adding feature: ", feat_name, " to data...")
 
 
 def main():
 
     # read raw data
-    #read_data()
+    # read_data()
 
     # load saved data
     data = load_data()
     data = data['light_curves']
 
     # bin data
-    bin_data(data,normalize=True)
+    bin_data(data, normalize=True)
 
     # load binned data
     binned_data = load_binned()
@@ -265,6 +265,7 @@ def main():
     augment_binned_data(binned_data)
 
     aug_data = load_augmented()
+
 
 if __name__ == '__main__':
     main()
