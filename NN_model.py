@@ -122,7 +122,8 @@ class RVAE:
             self.latent_dim,), name='lam')([z_mean, z_log_var])
 
         # encoder
-        encoder = Model(enc_input, [z_mean, z_log_var, z], name='encoder')
+        encoder = Model(enc_input, z, name='encoder')
+        encoder.compile(optimizer=self.optimizer)
         encoder.summary()
 
         # BUILD decoder
@@ -133,12 +134,9 @@ class RVAE:
 
         repeater = RepeatVector(30, name='rep')(dec_inp)
 
-        # TODO: are zeros still even here?
-        #mask_two = Masking(mask_value=0.0, name='m2')(repeater)
-
         # first recurrent layer
         x = GRU(self.gru_two, activation='tanh',
-                recurrent_activation='hard_sigmoid', return_sequences=True, name='gru5')(dec_inp)
+                recurrent_activation='hard_sigmoid', return_sequences=True, name='gru5')(repeater)
 
         # second recurrent layer
         x = GRU(self.gru_one, activation='tanh',
@@ -235,7 +233,9 @@ class RVAE:
         model.save(self.filepath+name)
 
     def get_encoder(self):
-        enc = load_model(self.filepath+'model/encoder')
+        enc = load_model(self.filepath+'model/encoder',custom_objects={'sampling': self.sampling,
+                                                                          'lossFunction': self.customLoss})
+
         return enc
 
     def train_model(self, model, es):
@@ -329,13 +329,14 @@ class RVAE:
         plt.show()
 
 
+
 def main():
 
     # # initialize rvae
     rvae = RVAE()
 
-    # # # build the model
-    model, encoder, es = rvae.build_model()
+    # build the model
+    model,encoder, es = rvae.build_model()
 
     # train model
     trained_rvae = rvae.train_model(model, es)
