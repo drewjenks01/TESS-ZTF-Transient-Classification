@@ -44,9 +44,6 @@ class RandomForest:
         for i in range(len(at_files)):
             at_dict[at_files[i]] = at_class[i]
 
-        print(at_dict)
-
-
         #loop through light_curve file
         for lc in tqdm(light_curves):
             #extract filename, flux, error
