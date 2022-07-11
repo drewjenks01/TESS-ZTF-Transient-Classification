@@ -29,15 +29,15 @@ def read_data(save=True):
 
     # extracts data from all transients file
     all_transients = pd.read_csv(
-        filepath+'data/all_transients.txt', delim_whitespace=True)
+        filepath+'data/all_transients.txt', header=None,delim_whitespace=True)
     all_transients.columns = ['sector', 'ra', 'dec', 'mag at discovery', 'time of discovery', 'type of transient',
                               'classification', 'IAU name', 'discovery survey', 'cam', 'ccd', 'column', 'row']
 
-    print(len(all_transients.loc[:, 'mag at discovery']))
+    #print(all_transients.loc[:,'IAU name'])
 
     # extracts data from confirmed supernovae file
     supernovae = pd.read_csv(
-        filepath+'data/supernovae.txt', delim_whitespace=True)
+        filepath+'data/supernovae.txt', header=None,delim_whitespace=True)
     supernovae.columns = ['sector', 'ra', 'dec', 'mag at discovery', 'time of discovery', 'type of transient',
                           'classification', 'IAU name', 'discovery survey', 'cam', 'ccd', 'column', 'row']
 
@@ -74,6 +74,8 @@ def load_data():
         light_curves = pkl.load(f)
 
     return {'all_transients': all_transients, 'supernovae': supernovae, 'light_curves': light_curves}
+
+
 
 
 def bin_data(data, save=True, normalize=False):
@@ -250,7 +252,7 @@ def concatFeature(raw_data, feat_name):
 def main():
 
     # read raw data
-    # read_data()
+    read_data()
 
     # load saved data
     data = load_data()
