@@ -248,7 +248,7 @@ def load_binned_dataframe():
     print('loading binned df...')
     return pd.read_pickle(filepath+'data/binned_df.pkl')
 
-
+# TODO: run again before training
 def create_aug_dataframe(save=True):
     """
     Creates a DataFrame for augmented data.
@@ -291,9 +291,10 @@ def create_aug_dataframe(save=True):
         classif = lc_class[i]
         time = lc_time[i]
 
-        # normalize flux & error b/w [-1,1]
+        # normalize flux, error, and mag b/w [-1,1]
         flux = 2 * (flux-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
         error = 2 * (error-np.min(error))/(np.max(error)-np.min(error)) - 1
+        mag = 2 * (mag-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
 
         if i == 0:
             print('old len of flux, error, mag: ',
@@ -335,7 +336,6 @@ def create_aug_dataframe(save=True):
 def load_aug_dataframe():
     print('loading aug df...')
     return pd.read_pickle(filepath+'data/aug_df.pkl')
-
 
 def plot_random_binned_data():
 
@@ -414,7 +414,6 @@ def plot_specific(df_type,filename):
     plt.show()
 
     print('indx: ',indx)
-
     
 def find_outliers():
     df = load_raw_dataframe()
@@ -439,6 +438,47 @@ def find_outliers():
 
     print('num of outliers: ',count)
 
+def prepare_data(save=True):
+
+    NN_features = ('Flux', 'Error','Mag at Discovery')
+
+    df = load_aug_dataframe()
+
+    columns = df.columns
+
+    print('df length: ',len(df))
+
+    prepared_data = []
+
+    features=[]
+
+    for column in columns:
+        
+        if column in NN_features:
+
+            print('adding feature: ',column)
+
+            features.append(np.array(df.loc[:,column]))
+ 
+    for i in range(len(df)):
+
+        #extract lc feats
+        lc_flux = np.vstack(features[0][i])
+        lc_error = np.vstack(features[1][i])
+        lc_mag = np.vstack(features[2][i])
+
+        #combine
+        lc_flux = np.concatenate((lc_flux,lc_error),axis=1)
+        lc_flux = np.concatenate((lc_flux,lc_mag),axis=1)
+
+        if i ==0:
+            print('shape of combined features for one lc: ',lc_flux.shape)
+        prepared_data.append(lc_flux)
+
+    prepared_data = np.array(prepared_data)
+    print('shape of prepared data: ', prepared_data.shape)
+    if save:
+        np.save(filepath+'data/prepared_data.npy', prepared_data)
 
 
 def main():
@@ -454,8 +494,9 @@ def main():
     # plot binned vs raw
    # plot_random_binned_data()
 
-   plot_specific('raw','2021yjr')
-   find_outliers()
+#    plot_specific('raw','2021yjr')
+#    find_outliers()
+    prepare_data()
 
 
 if __name__ == '__main__':
