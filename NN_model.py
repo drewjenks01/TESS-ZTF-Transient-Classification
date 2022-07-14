@@ -9,13 +9,13 @@ from keras.layers import (
     GRU, Dense, Masking, RepeatVector, TimeDistributed, Lambda, concatenate)
 from keras.optimizers import adam_v2
 from keras.models import load_model
-from pre_process import load_augmented, load_binned
 from tensorflow.python.framework.ops import disable_eager_execution
 import matplotlib.pyplot as plt
 from sklearn.model_selection import train_test_split
 import sys
 from tcn import TCN
 from tqdm import tqdm
+import random
 
 disable_eager_execution()
 """
@@ -50,17 +50,11 @@ class RVAE:
         self.batch_size = 128
 
         # save and load filepath
-        self.filepath = '/Users/drewj/Documents/Urops/Muthukrishna/'
-
-        # number of input features
-        self.num_feats = 1
+        self.filepath = '/Users/drewj/Documents/Urops/Muthukrishna/' 
 
         # optimizer
         self.optimizer = adam_v2.Adam(learning_rate=1e-3, beta_1=0.9, beta_2=0.999,
                                       decay=0)
-
-        # dimension of the input space for enc
-        self.enc_input_shape = (30, self.num_feats)  # X.shape = (..., 29, ..)
 
         # set the dimension of the latent vector
         self.latent_dim = 20
@@ -71,18 +65,22 @@ class RVAE:
         # input to first dec, second enc layer
         self.gru_two = 100
 
-        # load augmented data, split into input and outputs
-        self.aug_data = load_augmented()
-        # should be all features besides time
-        self.aug_inp = self.aug_data.copy()[:, :, 1:]
-        # should be only flux (...,30,1)
-        self.aug_out = self.aug_data.copy()[:, :, 1:2]
+        #load prepared data (acts as input)
+        self.prepared_data = np.load(self.filepath+'data/prepared_data.npy')
 
-        # load binned
-        self.binned_data = load_binned()
+        # number of input features
+        self.num_feats = self.prepared_data.shape[2]
+
+        # dimension of the input space for enc
+        self.enc_input_shape = (30, self.num_feats)  # X.shape = (..., 30, ..)
+
+        #prepared out (only flux)
+        self.prepared_output = self.prepared_data[:,:,0].reshape(3270,30,1)
+        print(self.prepared_output.shape)
+        assert(self.prepared_output.shape == (3270,30,1))
 
         # test and train data
-        self.train_test_data = self.split_aug_data(self.aug_inp, self.aug_out)
+        self.train_test_data = self.split_prep_data(self.prepared_data, self.prepared_output)
 
     def build_model(self):
         """
@@ -122,8 +120,7 @@ class RVAE:
             self.latent_dim,), name='lam')([z_mean, z_log_var])
 
         # encoder
-        encoder = Model(enc_input, z, name='encoder')
-        encoder.compile(optimizer=self.optimizer)
+        encoder = Model(enc_input, [z_mean,z_log_var,z], name='encoder')
         encoder.summary()
 
         # BUILD decoder
@@ -215,16 +212,16 @@ class RVAE:
 
         return lossFunction
 
-    def split_aug_data(self, aug_inp, aug_out):
+    def split_prep_data(self, prep_inp, prep_out):
         """Splits data into 3/4 training, 1/4 testing"""
 
         print("Splitting data into train and test...")
 
         x_train, x_test, y_train, y_test = train_test_split(
-            aug_inp, aug_out, test_size=0.25)
+            prep_inp, prep_out, test_size=0.25)
 
-        print('shape of aug_inp and x_train:', aug_inp.shape, x_train.shape)
-        print('shape of aug_out and y_train:', aug_out.shape, y_train.shape)
+        print('shape of aug_inp and x_train:', prep_inp.shape, x_train.shape)
+        print('shape of aug_out and y_train:', prep_out.shape, y_train.shape)
 
         return [x_train, x_test, y_train, y_test]
 
@@ -234,7 +231,7 @@ class RVAE:
 
     def get_encoder(self):
         enc = load_model(self.filepath+'model/encoder',custom_objects={'sampling': self.sampling,
-                                                                          'lossFunction': self.customLoss})
+                                                                          'lossFunction': self.customLoss},compile=False)
 
         return enc
 
@@ -252,19 +249,24 @@ class RVAE:
     def test_model(self, rvae=None):
 
         test_inp = self.train_test_data[1][:100]
-        test_inp = test_inp.reshape(-1, 1, 30, 2)
+        test_inp = test_inp.reshape(-1, 1, 30, self.num_feats)
         test_out = self.train_test_data[3][:100]
 
         # load model if none passed
         if not rvae:
             print('loading model for testing...')
-            rvae = load_model(self.filepath+'model/best', custom_objects={'sampling': self.sampling,
+            rvae = load_model(self.filepath+'model/rvae', custom_objects={'sampling': self.sampling,
                                                                           'lossFunction': self.customLoss})
         rvae.summary()
 
         # for each light curve, use model to predict decoded output
         # and plot against raw data to compare
        # avg_mse=()
+        inpt_length = len(test_inp)
+        indxs=set()
+        for i in range(9):
+            indxs.add(random.randint(0,inpt_length-1))
+
         print('predicting...')
         for i in tqdm(range(len(test_inp))):
 
@@ -276,7 +278,7 @@ class RVAE:
                 print('shape of predicted data: ', predicted.shape)
 
             # if one of first 10 predictions, plot prediction vs true
-            if i < 10:
+            if i in indxs:
                 self.plot_raw_pred(test_out[i], predicted, i)
 
             # calulcate mse
@@ -316,13 +318,15 @@ class RVAE:
                     str(num)+'.png', facecolor='white')
 
     def plot_label_clusters(self):
+        #TODO: add classification labels
         # display a 2D plot of the light curves in the latent space
         data = self.train_test_data[0]
         labels = self.train_test_data[2]
+        print(labels.shape)
         encoder = self.get_encoder()
         z_mean, _, _ = encoder.predict(data)
         plt.figure(figsize=(12, 10))
-        plt.scatter(z_mean[:, 0], z_mean[:, 1], c=labels)
+        plt.scatter(z_mean[:, 0], z_mean[:, 1])
         plt.colorbar()
         plt.xlabel("z[0]")
         plt.ylabel("z[1]")
@@ -332,21 +336,21 @@ class RVAE:
 
 def main():
 
-    # # initialize rvae
+    # # initialize rvae TODO: train again w/ normalized mag
     rvae = RVAE()
 
     # build the model
-    model,encoder, es = rvae.build_model()
+    # model,encoder, es = rvae.build_model()
 
-    # train model
-    trained_rvae = rvae.train_model(model, es)
+    # # train model
+    # trained_rvae = rvae.train_model(model, es)
 
-    # save model
-    rvae.save_model(trained_rvae, 'model/rvae')
-    rvae.save_model(encoder, 'model/encoder')
+    # # save model
+    # rvae.save_model(trained_rvae, 'model/rvae')
+    # rvae.save_model(encoder, 'model/encoder')
 
     # load model
-    rvae.test_model()
+    #rvae.test_model()
     rvae.plot_label_clusters()
 
 
