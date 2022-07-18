@@ -155,7 +155,7 @@ def create_binned_dataframe(save=True):
     """
     Creates Binned DataFrame.
 
-    Bins light curves to 0.5 day intervals.
+    Bins light curves to 1 day intervals.
 
     binned_data.shape = (3857,13-30,6) -> filename, time, flux, error, mag, class
     """
