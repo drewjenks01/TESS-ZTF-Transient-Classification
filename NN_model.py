@@ -24,9 +24,6 @@ tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 disable_eager_execution()
 """
 To test:
-    - add *30 to recon loss
-    - lower latent dim
-    - masking correct val (close to 0) with mask 2
     - LSTM, TCN
 
 Notes:
@@ -38,7 +35,16 @@ Best model so far:
     - latent dim= 20
     - 150 units each
     - 1e-3 LR
-    - 
+
+Current:
+    - 400 epochs
+    - 128 batch size
+    - latent dim =20
+    - 150 units each
+    - mag not normlized, others are
+    - connected NN
+    - 1e-3 lr
+    - final loss: 
 
 
 unique classifiers:  {'SNIa': 0, 'SNII': 1, 'Unclassified': 2, 'CV': 3, 'SLSN-I': 4,
