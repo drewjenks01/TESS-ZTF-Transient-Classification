@@ -4,6 +4,9 @@ This file is used for reading in data and making initial plots.
 To do:
     - implement 1/2 day bins
     - normalize mag?
+
+Qs:
+    - normalize before or after binned 
 """
 # %%
 
@@ -95,6 +98,18 @@ def create_raw_dataframe(save=True):
     at_class = all_transients.loc[:, 'classification']
     at_mags = all_transients.loc[:, 'mag at discovery']
 
+    # change classificiations into numbers
+    classes = {}
+    count = 0
+
+    # collect unique classifications, assign a number
+    for c in at_class:
+        if c not in classes:
+            classes[c] = count
+            count += 1
+
+    print('unique classifiers: ', classes)
+
     at_dict = {}
 
     for i in range(len(at_files)):
@@ -114,7 +129,7 @@ def create_raw_dataframe(save=True):
 
         # grab mag and class
         mag = at_dict[name_abr][0]
-        classif = at_dict[name_abr][1]
+        classif = classes[at_dict[name_abr][1]]
 
         # add data to DataFrame dict list
         df_dict.append({'Filename': name_abr, 'Time': time, 'Flux': flux, 'Error': error,
@@ -146,8 +161,8 @@ def create_binned_dataframe(save=True):
     """
     print("binning data...")
 
-    # deep copy of old df
-    old_df = load_raw_dataframe().copy()
+    # deep copy of old df w/out outliers
+    old_df = remove_outliers().copy()
 
     # define columns
     columns = ['Filename', 'Time', 'Flux',
@@ -173,6 +188,11 @@ def create_binned_dataframe(save=True):
         name_abr = lc_name[i]
         classif = lc_class[i]
         mag = lc_mag[i]
+
+        # normalize flux, error, and mag b/w [-1,1]
+        flux = 2 * (flux-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
+        error = 2 * (error-np.min(error))/(np.max(error)-np.min(error)) - 1
+        #mag = 2 * (mag-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
 
         if i == 0:
             print('len of raw time,flux, error, mag: ',
@@ -231,7 +251,7 @@ def create_binned_dataframe(save=True):
         # check time test
         if i == 0:
             print('len of binned time,flux, error: ', len(binned_dicts[i]['Time']),
-             len(binned_dicts[i]['Flux']), len(binned_dicts[i]['Error']))
+                  len(binned_dicts[i]['Flux']), len(binned_dicts[i]['Error']))
 
     # create dataframe
     binned_df = pd.DataFrame(binned_dicts, columns=columns)
@@ -248,7 +268,7 @@ def load_binned_dataframe():
     print('loading binned df...')
     return pd.read_pickle(filepath+'data/binned_df.pkl')
 
-# TODO: run again before training
+
 def create_aug_dataframe(save=True):
     """
     Creates a DataFrame for augmented data.
@@ -291,14 +311,11 @@ def create_aug_dataframe(save=True):
         classif = lc_class[i]
         time = lc_time[i]
 
-        # normalize flux, error, and mag b/w [-1,1]
-        flux = 2 * (flux-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
-        error = 2 * (error-np.min(error))/(np.max(error)-np.min(error)) - 1
-        mag = 2 * (mag-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
-
         if i == 0:
             print('old len of flux, error, mag: ',
                   flux.size, error.size, mag.size)
+
+        old_length = len(flux)
 
         # concat 0.0's until each feature has len = 30
         while (flux.size != 30):
@@ -307,14 +324,15 @@ def create_aug_dataframe(save=True):
         while (error.size != 30):
             error = np.concatenate((error, concat))
 
-      
-        mag = np.repeat(mag,30)
+        mag = np.repeat(mag, old_length)
 
+        while (mag.size != 30):
+            mag = np.concatenate((mag, concat))
 
         # add data to DataFrame dict list
         aug_dicts.append({'Filename': name_abr, 'Time': time,
-                             'Flux': flux, 'Error': error,
-                            'Mag at Discovery': mag, 'Class': classif})
+                          'Flux': flux, 'Error': error,
+                          'Mag at Discovery': mag, 'Class': classif})
 
         # check lengths test
         if i == 0:
@@ -337,6 +355,7 @@ def load_aug_dataframe():
     print('loading aug df...')
     return pd.read_pickle(filepath+'data/aug_df.pkl')
 
+
 def plot_random_binned_data():
 
     # load binned and raw df
@@ -350,7 +369,7 @@ def plot_random_binned_data():
     # choose 5 random lc's
     for _ in range(5):
 
-        indx = random.randint(0,num_lc-1)
+        indx = random.randint(0, num_lc-1)
 
         print('indx: ', indx)
 
@@ -363,7 +382,7 @@ def plot_random_binned_data():
 
         title = raw_lc['Filename']
 
-        print(len(raw_lc['Time']),len(raw_lc['Flux']))
+        print(len(raw_lc['Time']), len(raw_lc['Flux']))
 
         # raw data
         plt.errorbar(list(raw_lc['Time']),
@@ -383,23 +402,30 @@ def plot_random_binned_data():
         # show image
         plt.show()
 
-def plot_specific(df_type,filename):
+
+def plot_specific(df_type, filename):
+    """
+    Plots the data of a specific light curve
+
+    Args:
+        df_type (str): type of dataframe to extract lc from (raw, binned, aug)
+        filename (str): filename abreviation of the light curve to plot
+    """
     if df_type == 'raw':
         df = load_raw_dataframe()
-   
+
     elif df_type == 'binned':
         df = load_binned_dataframe()
-   
+
     else:
         df = load_aug_dataframe()
 
-
-    names = df.loc[:,'Filename']
+    names = df.loc[:, 'Filename']
 
     for i in range(len(names)):
 
         if names[i] == filename:
-            indx =i
+            indx = i
 
     plt.figure()
 
@@ -407,78 +433,98 @@ def plot_specific(df_type,filename):
 
     time = df.loc[indx]['Time']
 
-    plt.plot(time,flux)
+    plt.plot(time, flux)
 
     plt.title(filename)
 
     plt.show()
 
-    print('indx: ',indx)
-    
-def find_outliers():
+    print('indx: ', indx)
+
+
+def remove_outliers():
+    """
+    Outputs number of outliers caused by light scattering
+    """
     df = load_raw_dataframe()
 
-    fluxs = df.loc[:,'Flux']
+    print('old df len: ', len(df))
 
-    count =0
+    indxs = []
 
-    for flux in tqdm(fluxs):
+    fluxs = df.loc[:, 'Flux']
 
-        outlier=False
+    pd.DataFrame
+    count = 0
+
+    for i in tqdm(range(len(fluxs))):
+
+        flux = fluxs[i]
+
+        outlier = False
 
         for f in flux:
-            if f >1e6:
+            if f > 1e6:
                 outlier = True
                 break
 
-
         if outlier:
-            count +=1
+            indxs.append(i)
+            count += 1
 
+    print('num of outliers: ', count)
 
-    print('num of outliers: ',count)
+    new_df = df.drop(labels=indxs)
+    new_df = new_df.reset_index(drop=True)
+
+    print('new df len: ', len(new_df))
+
+    return new_df
+
 
 def prepare_data(save=True):
 
-    NN_features = ('Flux', 'Error','Mag at Discovery')
+    NN_features = ('Flux', 'Error', 'Mag at Discovery')
 
     df = load_aug_dataframe()
 
     columns = df.columns
 
-    print('df length: ',len(df))
+    print('df length: ', len(df))
 
     prepared_data = []
 
-    features=[]
+    features = []
 
     for column in columns:
-        
+
         if column in NN_features:
 
-            print('adding feature: ',column)
+            print('adding feature: ', column)
 
-            features.append(np.array(df.loc[:,column]))
- 
+            features.append(np.array(df.loc[:, column]))
+
     for i in range(len(df)):
 
-        #extract lc feats
+        # extract lc feats
         lc_flux = np.vstack(features[0][i])
         lc_error = np.vstack(features[1][i])
         lc_mag = np.vstack(features[2][i])
 
-        #combine
-        lc_flux = np.concatenate((lc_flux,lc_error),axis=1)
-        lc_flux = np.concatenate((lc_flux,lc_mag),axis=1)
+        # combine
+        lc_flux = np.concatenate((lc_flux, lc_error), axis=1)
+        lc_flux = np.concatenate((lc_flux, lc_mag), axis=1)
 
-        if i ==0:
-            print('shape of combined features for one lc: ',lc_flux.shape)
+        if i == 0:
+            print('shape of combined features for one lc: ', lc_flux.shape)
         prepared_data.append(lc_flux)
 
     prepared_data = np.array(prepared_data)
     print('shape of prepared data: ', prepared_data.shape)
     if save:
         np.save(filepath+'data/prepared_data.npy', prepared_data)
+
+    return prepared_data
 
 
 def main():
@@ -487,7 +533,7 @@ def main():
    # read_raw_data()
 
     # build df's
-    # create_raw_dataframe()
+    create_raw_dataframe()
     # create_binned_dataframe()
     # create_aug_dataframe()
 
@@ -496,7 +542,7 @@ def main():
 
 #    plot_specific('raw','2021yjr')
 #    find_outliers()
-    prepare_data()
+    # prepare_data()
 
 
 if __name__ == '__main__':
