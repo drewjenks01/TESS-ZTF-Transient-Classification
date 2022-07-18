@@ -159,12 +159,13 @@ class RandomForest:
         conf_mat = pd.crosstab(y_test, y_pred, rownames=[
                                'Actual Species'], colnames=['Predicted Species'])
 
-        print('Confusion Matrix: ', conf_mat)
+        print('Confusion Matrix (better version saved): ', conf_mat)
 
         if save:
             # save
             print('saving rf...')
             joblib.dump(rf, self.filepath+"random_forest.joblib")
+            conf_mat.to_csv(self.filepath+'confusion_matrix.csv', index=False)
 
         return rf
 
