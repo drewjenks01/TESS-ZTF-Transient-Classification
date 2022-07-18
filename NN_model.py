@@ -185,7 +185,7 @@ class RVAE:
         # compile model
         rvae.compile(optimizer=self.optimizer, loss=custom_loss)
 
-        es = EarlyStopping(monitor='val_loss', min_delta=0, patience=50,
+        es = EarlyStopping(monitor='val_loss', min_delta=0, patience=10,
                            verbose=0, mode='min', baseline=None,
                            restore_best_weights=True)
 
@@ -269,7 +269,7 @@ class RVAE:
         # compile model
         rvae.compile(optimizer=self.optimizer, loss=custom_loss)
 
-        es = EarlyStopping(monitor='val_loss', min_delta=0, patience=50,
+        es = EarlyStopping(monitor='val_loss', min_delta=0, patience=10,
                            verbose=0, mode='min', baseline=None,
                            restore_best_weights=True)
 
