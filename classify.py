@@ -149,7 +149,7 @@ class RandomForest:
         # performing predictions on the test dataset
         y_pred = rf.predict(x_test)
 
-        print('y_test counts: ', Counter(y_test))
+        print('y_test counts: ', Counter(y_train))
         print('y_pred counts: ', Counter(y_pred))
 
         # check accuracy
@@ -159,7 +159,8 @@ class RandomForest:
         conf_mat = pd.crosstab(y_test, y_pred, rownames=[
                                'Actual Species'], colnames=['Predicted Species'])
 
-        print('Confusion Matrix (better version saved): ', conf_mat)
+        print('Confusion Matrix:')
+        print(conf_mat.to_string())
 
         if save:
             # save
@@ -206,11 +207,7 @@ class RandomForest:
         data = self.encoder.predict(data)[2]
 
         # make class num -> classification dict
-        classes = {0: 'SNIa', 1: 'SNII', 2: 'Unclassified', 3: 'CV', 4: 'SLSN-I', 5: 'AGN',
-                   6: 'SNIc-BL', 7: 'SNIbn', 8: 'SN', 9: 'FRB', 10: 'SNIc', 11: 'SNIb/c',
-                   12: 'SNIIn', 13: 'SNIb', 14: 'SNIa-91T-like', 15: 'Mdwarf', 16: 'SNIIb',
-                   17: 'Nova', 18: 'SNIa-91bg-like', 19: 'Other', 20: 'SNIIP', 21: 'SNI',
-                   22: 'Varstar', 23: 'SNII-pec', 24: 'SNIa-pec', 25: 'SNIa-SC'}
+        classes = {0:'SNIa',1:'SNIbc',2:'SNII',3: 'Other',4:'Unclassified'}
 
         # make prediction from data
         pred = rf.predict(data)
