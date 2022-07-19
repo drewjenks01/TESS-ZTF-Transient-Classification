@@ -17,7 +17,6 @@ import sys
 from tcn import TCN
 from tqdm import tqdm
 import random
-import tensorflow as tf
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
 
@@ -37,21 +36,25 @@ Best model so far:
     - 1e-3 LR
 
 Current:
-    - 400 epochs
+    - 300 epochs
     - 128 batch size
     - latent dim =20
     - 150 units each
     - mag not normlized, others are
     - connected NN
     - 1e-3 lr
-    - final loss: 
+    - final loss: 2.1862
 
 
-unique classifiers:  {'SNIa': 0, 'SNII': 1, 'Unclassified': 2, 'CV': 3, 'SLSN-I': 4,
-                     'AGN': 5, 'SNIc-BL': 6, 'SNIbn': 7, 'SN': 8, 'FRB': 9, 'SNIc': 10, 
-                    'SNIb/c': 11, 'SNIIn': 12, 'SNIb': 13, 'SNIa-91T-like': 14, 'Mdwarf': 15, 
-                    'SNIIb': 16, 'Nova': 17, 'SNIa-91bg-like': 18, 'Other': 19, 'SNIIP': 20, 
-                    'SNI': 21, 'Varstar': 22, 'SNII-pec': 23, 'SNIa-pec': 24, 'SNIa-SC': 25}
+unique classifiers:  {('SNIa','SNIa-91T-like','SNIa-91bg-like','SNIa-pec', 'SNIa-SC'): 0,
+                      ('SNIbn','SNIb/c','SNIb','SNIc','SNIc-BL'): 1,
+                      ('SNII', 'SNIIb','SNIIP','SNII-pec','SNIIn'): 2, 
+                       ('CV', 'SLSN-I','AGN', 'SN', 'FRB','Mdwarf', 
+                        'Nova', 'Other', 'SNI', 'Varstar'): 3,
+                        'Unclassified': 4 }
+
+class counts:  class counts:  {0: 245, 1: 15, 2: 62, 3: 20, 4: 2026}
+
 """
 
 
@@ -61,7 +64,7 @@ class RVAE:
     def __init__(self):
 
         # training epochs
-        self.epochs = 400
+        self.epochs = 300
 
         # batch size
         self.batch_size = 128
@@ -92,7 +95,7 @@ class RVAE:
         self.enc_input_shape = (30, self.num_feats)  # X.shape = (..., 30, ..)
 
         # number of light curves
-        self.num_lcs = 3180
+        self.num_lcs = 3157
 
         # indxs for test and train
         self.train_indx = set()
@@ -269,7 +272,7 @@ class RVAE:
         # compile model
         rvae.compile(optimizer=self.optimizer, loss=custom_loss)
 
-        es = EarlyStopping(monitor='val_loss', min_delta=0, patience=10,
+        es = EarlyStopping(monitor='val_loss', min_delta=0, patience=30,
                            verbose=0, mode='min', baseline=None,
                            restore_best_weights=True)
 
@@ -286,7 +289,9 @@ class RVAE:
 
     def customLoss(self, yTrue, yPred):
         """
-        Custom loss which doesn't use the errors
+        Custom loss which doesn't use the errors.
+
+        Used as custom object when loading saved models.
         """
 
         return K.mean(K.square(yTrue - yPred)/K.square(yTrue))
@@ -302,8 +307,8 @@ class RVAE:
        # @tf.function
 
         def lossFunction(yTrue, yPred):
-           # reconstruction_loss = K.mean(K.square(yTrue[:, :, 1:(1+self.nfilts)] - yPred[:, :, :]))*30
-            reconstruction_loss = K.log(K.mean(K.square(yTrue - yPred)))
+           # reconstruction_loss = K.log(K.mean(K.square(yTrue - yPred)))
+            reconstruction_loss = 30*K.mean(K.square(yTrue - yPred))
 
             # tf.print('rec: ',reconstruction_loss,output_stream=sys.stdout)
             # tf.print('kl: ', kl_loss,output_stream=sys.stdout)
@@ -483,11 +488,7 @@ class RVAE:
         classes = load_aug_dataframe().loc[:, 'Class']
         labels = []
 
-        class_counts = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0,
-                        5: 0, 6: 0, 7: 0, 8: 0, 9: 0, 10: 0,
-                        11: 0, 12: 0, 13: 0, 14: 0, 15: 0,
-                        16: 0, 17: 0, 18: 0, 19: 0, 20: 0,
-                        21: 0, 22: 0, 23: 0, 24: 0, 25: 0}
+        class_counts = {0: 0, 1: 0, 2: 0, 3: 0, 4: 0}
 
         for i in range(len(classes)):
             if i in self.train_indx:
@@ -510,15 +511,15 @@ def main():
     # initialize rvae
     rvae = RVAE()
 
-    # build the model
-    model, encoder, es = rvae.build_connected_model()
+    # # build the model
+    # model, encoder, es = rvae.build_connected_model()
 
-    # train model
-    trained_rvae = rvae.train_model(model, es)
+    # # train model
+    # trained_rvae = rvae.train_model(model, es)
 
-    # save model
-    rvae.save_model(trained_rvae, 'model/rvae')
-    rvae.save_model(encoder, 'model/encoder')
+    # # save model
+    # rvae.save_model(trained_rvae, 'model/rvae')
+    # rvae.save_model(encoder, 'model/encoder')
 
     # load model
     rvae.test_model()
