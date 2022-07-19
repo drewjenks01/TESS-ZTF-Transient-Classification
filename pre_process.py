@@ -99,16 +99,23 @@ def create_raw_dataframe(save=True):
     at_mags = all_transients.loc[:, 'mag at discovery']
 
     # change classificiations into numbers
-    classes = {}
-    count = 0
+    SNIa = {'SNIa','SNIa-91T-like','SNIa-91bg-like','SNIa-pec', 'SNIa-SC'}
+    SNIbc = {'SNIbn','SNIb/c','SNIb','SNIc','SNIc-BL'}
+    SNIi ={'SNII', 'SNIIb','SNIIP','SNII-pec','SNIIn'}
+    other = {'CV', 'SLSN-I','AGN', 'SN', 'FRB','Mdwarf', 
+                        'Nova', 'Other', 'SNI', 'Varstar'}
 
-    # collect unique classifications, assign a number
-    for c in at_class:
-        if c not in classes:
-            classes[c] = count
-            count += 1
-
-    print('unique classifiers: ', classes)
+    def modify_class(name):
+        if name in SNIa:
+            return 0
+        elif name in SNIbc:
+            return 1
+        elif name in SNIi:
+            return 2
+        elif name in other:
+            return 3
+        else:
+            return 4
 
     at_dict = {}
 
@@ -129,7 +136,7 @@ def create_raw_dataframe(save=True):
 
         # grab mag and class
         mag = at_dict[name_abr][0]
-        classif = classes[at_dict[name_abr][1]]
+        classif = modify_class(at_dict[name_abr][1])
 
         # add data to DataFrame dict list
         df_dict.append({'Filename': name_abr, 'Time': time, 'Flux': flux, 'Error': error,
@@ -137,6 +144,8 @@ def create_raw_dataframe(save=True):
 
     # create dataframe
     df = pd.DataFrame(df_dict, columns=columns)
+
+    df = remove_outliers(df)
 
     if save:
         print('saving raw DF')
@@ -162,7 +171,7 @@ def create_binned_dataframe(save=True):
     print("binning data...")
 
     # deep copy of old df w/out outliers
-    old_df = remove_outliers().copy()
+    old_df = load_raw_dataframe().copy()
 
     # define columns
     columns = ['Filename', 'Time', 'Flux',
@@ -188,11 +197,6 @@ def create_binned_dataframe(save=True):
         name_abr = lc_name[i]
         classif = lc_class[i]
         mag = lc_mag[i]
-
-        # normalize flux, error, and mag b/w [-1,1]
-        flux = 2 * (flux-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
-        error = 2 * (error-np.min(error))/(np.max(error)-np.min(error)) - 1
-        #mag = 2 * (mag-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
 
         if i == 0:
             print('len of raw time,flux, error, mag: ',
@@ -311,6 +315,11 @@ def create_aug_dataframe(save=True):
         classif = lc_class[i]
         time = lc_time[i]
 
+        # normalize flux, error, and mag b/w [-1,1]
+        flux = 2 * (flux-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
+        error = 2 * (error-np.min(error))/(np.max(error)-np.min(error)) - 1
+        #mag = 2 * (mag-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
+
         if i == 0:
             print('old len of flux, error, mag: ',
                   flux.size, error.size, mag.size)
@@ -386,20 +395,19 @@ def plot_random_binned_data():
 
         # raw data
         plt.errorbar(list(raw_lc['Time']),
-                     raw_lc['Flux'], fmt='.', color='r', alpha=0.5)
+                     raw_lc['Flux'], color='r', alpha=0.5)
+
+        plt.title('raw vs binned')
 
         # binned data
         plt.errorbar(binned_lc['Time'], binned_lc['Flux'],
                      binned_lc['Error'], color='b')
-
-        plt.title(title)
 
         plt.legend(['raw', 'binned'])
 
         # save image
         plt.savefig(filepath+'plots/raw_err_'+title+'.png', facecolor='white')
 
-        # show image
         plt.show()
 
 
@@ -442,11 +450,12 @@ def plot_specific(df_type, filename):
     print('indx: ', indx)
 
 
-def remove_outliers():
+def remove_outliers(df):
     """
     Outputs number of outliers caused by light scattering
     """
-    df = load_raw_dataframe()
+    print('removing outliers...')
+    #df = load_raw_dataframe()
 
     print('old df len: ', len(df))
 
@@ -454,7 +463,6 @@ def remove_outliers():
 
     fluxs = df.loc[:, 'Flux']
 
-    pd.DataFrame
     count = 0
 
     for i in tqdm(range(len(fluxs))):
@@ -464,7 +472,7 @@ def remove_outliers():
         outlier = False
 
         for f in flux:
-            if f > 1e6:
+            if f > 1e6 or f < -1e6:
                 outlier = True
                 break
 
@@ -534,18 +542,20 @@ def main():
 
     # build df's
     create_raw_dataframe()
-    # create_binned_dataframe()
-    # create_aug_dataframe()
+    create_binned_dataframe()
+    create_aug_dataframe()
 
     # plot binned vs raw
-   # plot_random_binned_data()
+    plot_random_binned_data()
 
-#    plot_specific('raw','2021yjr')
+    # plot_specific('raw','2021aaeb')
 #    find_outliers()
-    # prepare_data()
+    #prepare_data()
 
 
 if __name__ == '__main__':
     main()
+
+# %%
 
 # %%
