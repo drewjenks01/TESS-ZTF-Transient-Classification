@@ -21,6 +21,7 @@ import math
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
 import random
+from sklearn import preprocessing
 
 filepath = '/Users/drewj/Documents/Urops/Muthukrishna/'
 lc_files = next(walk(
@@ -92,18 +93,20 @@ def create_raw_dataframe(save=True):
     # define columns
     columns = ['Filename', 'Time', 'Flux',
                'Error', 'Mag at Discovery', 'Class']
-
+    
+    
     # loop through AT and grab necessary data
     at_files = all_transients.loc[:, 'IAU name']
     at_class = all_transients.loc[:, 'classification']
     at_mags = all_transients.loc[:, 'mag at discovery']
 
     # change classificiations into numbers
-    SNIa = {'SNIa','SNIa-91T-like','SNIa-91bg-like','SNIa-pec', 'SNIa-SC'}
+    SNIa = {'SNIa','SNI','SNIa-91T-like','SNIa-91bg-like','SNIa-pec', 'SNIa-SC'}
     SNIbc = {'SNIbn','SNIb/c','SNIb','SNIc','SNIc-BL'}
     SNIi ={'SNII', 'SNIIb','SNIIP','SNII-pec','SNIIn'}
-    other = {'CV', 'SLSN-I','AGN', 'SN', 'FRB','Mdwarf', 
-                        'Nova', 'Other', 'SNI', 'Varstar'}
+    other = {'CV', 'SLSN-I','AGN', 'FRB','Mdwarf', 
+                        'Nova', 'Other', 'Varstar'}
+
 
     def modify_class(name):
         if name in SNIa:
@@ -136,6 +139,8 @@ def create_raw_dataframe(save=True):
 
         # grab mag and class
         mag = at_dict[name_abr][0]
+        if at_dict[name_abr][1] =='SN':
+            continue
         classif = modify_class(at_dict[name_abr][1])
 
         # add data to DataFrame dict list
@@ -203,7 +208,7 @@ def create_binned_dataframe(save=True):
                   time.size, flux.size, error.size)
 
         # starting time
-        curr_time = math.floor(time[0])
+        curr_time = round(time[0] * 2)/2.0
 
         # new binned arrays
         binned_features = {'time': [], 'flux': [], 'error': []}
@@ -213,10 +218,14 @@ def create_binned_dataframe(save=True):
         count = 0
         sub_error = np.array([])
 
+        low_bound=math.floor(curr_time)
+
         for t in range(len(time)):
 
             # if time goes to next day then start new bin interval
-            if math.floor(time[t]) != curr_time:
+            if round(time[t] * 2) / 2.0 != curr_time:
+
+                #print(curr_time,round(time[t])-0.5)
 
                 flux_mean = flux_sum/count
                 err_bin = np.sqrt(np.mean(sub_error**2))
@@ -227,7 +236,8 @@ def create_binned_dataframe(save=True):
                 binned_features['error'].append(err_bin)
 
                 # set new current day
-                curr_time = math.floor(time[t])
+                curr_time = round(time[t] * 2)/2.0
+                #low_bound = math.floor(time[t])
 
                 # reset bins
                 flux_sum = 0.0
@@ -259,6 +269,10 @@ def create_binned_dataframe(save=True):
 
     # create dataframe
     binned_df = pd.DataFrame(binned_dicts, columns=columns)
+
+    #bin counts
+    counts = [len(days) for days in binned_df.loc[:,'Flux']]
+    print('Bin counts: ', Counter(counts))
 
     if save:
         print('saving binned df...')
@@ -292,6 +306,8 @@ def create_aug_dataframe(save=True):
                'Error', 'Mag at Discovery', 'Class']
 
     aug_dicts = []
+    
+    num_timesteps = 46
 
     # extract features to be binned
     lc_flux = old_df.loc[:, 'Flux']
@@ -302,7 +318,7 @@ def create_aug_dataframe(save=True):
     lc_mag = old_df.loc[:, 'Mag at Discovery']
 
     # array to concat
-    concat = np.array([0.0])
+    concat = np.array([0.])
 
     # loop through each light curve to bin
     for i in tqdm(range(len(lc_flux))):
@@ -316,27 +332,42 @@ def create_aug_dataframe(save=True):
         time = lc_time[i]
 
         # normalize flux, error, and mag b/w [-1,1]
-        flux = 2 * (flux-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
-        error = 2 * (error-np.min(error))/(np.max(error)-np.min(error)) - 1
-        #mag = 2 * (mag-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
+        flux = preprocessing.normalize(flux.reshape(1, -1))[0]
+        error = preprocessing.normalize(error.reshape(1, -1))[0]
+        mag = preprocessing.normalize(mag.reshape(1, -1))[0]
+
+
+        # flux = 2 * (flux-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
+        # error = 2 * (error-np.min(error))/(np.max(error)-np.min(error)) - 1
+        # mag = 2 * (mag-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
 
         if i == 0:
+            print('normalized flux shape and vals: ', flux.shape, max(flux), min(flux))
             print('old len of flux, error, mag: ',
                   flux.size, error.size, mag.size)
 
         old_length = len(flux)
 
         # concat 0.0's until each feature has len = 30
-        while (flux.size != 30):
-            flux = np.concatenate((flux, concat))
+        if flux.size>num_timesteps:
+            flux = flux[:num_timesteps]
+        elif flux.size<num_timesteps:
+            while (flux.size != num_timesteps):
+                flux = np.concatenate((flux, concat))
 
-        while (error.size != 30):
-            error = np.concatenate((error, concat))
+        if error.size>num_timesteps:
+            error = error[:num_timesteps]
+        elif error.size<num_timesteps:
+            while (error.size != num_timesteps):
+                error = np.concatenate((error, concat))
 
         mag = np.repeat(mag, old_length)
 
-        while (mag.size != 30):
-            mag = np.concatenate((mag, concat))
+        if mag.size>num_timesteps:
+            mag = mag[:num_timesteps]
+        elif mag.size<num_timesteps:
+            while (mag.size != num_timesteps):
+                mag = np.concatenate((mag, concat))
 
         # add data to DataFrame dict list
         aug_dicts.append({'Filename': name_abr, 'Time': time,
@@ -462,6 +493,7 @@ def remove_outliers(df):
     indxs = []
 
     fluxs = df.loc[:, 'Flux']
+    classes = df.loc[:,'Class']
 
     count = 0
 
@@ -530,6 +562,7 @@ def prepare_data(save=True):
     prepared_data = np.array(prepared_data)
     print('shape of prepared data: ', prepared_data.shape)
     if save:
+        print('saving prepared data...')
         np.save(filepath+'data/prepared_data.npy', prepared_data)
 
     return prepared_data
@@ -541,8 +574,8 @@ def main():
    # read_raw_data()
 
     # build df's
-    create_raw_dataframe()
-    create_binned_dataframe()
+    # create_raw_dataframe()
+    #create_binned_dataframe()
     create_aug_dataframe()
 
     # plot binned vs raw
@@ -550,12 +583,10 @@ def main():
 
     # plot_specific('raw','2021aaeb')
 #    find_outliers()
-    #prepare_data()
+    prepare_data()
 
 
 if __name__ == '__main__':
     main()
-
-# %%
 
 # %%
