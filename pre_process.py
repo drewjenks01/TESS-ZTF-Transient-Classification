@@ -33,7 +33,6 @@ def read_raw_data(save=True):
     Loads all data files into Panda Dataframes.
     Light curves are a numpy array full of dataframes.
     """
-
     print("reading raw data...")
 
     # extracts data from all transients file
@@ -42,72 +41,23 @@ def read_raw_data(save=True):
     all_transients.columns = ['sector', 'ra', 'dec', 'mag at discovery', 'time of discovery', 'type of transient',
                               'classification', 'IAU name', 'discovery survey', 'cam', 'ccd', 'column', 'row']
 
-    #print(all_transients.loc[:,'IAU name'])
+    # define filter id's
+    tess_id = 700
+    ztf_r_id = 630
+    ztf_g_id = 550
 
-    # reads through all light curve files and appends each df to a list
-    light_curves = []
-    for f in tqdm(lc_files):
-        df = pd.read_csv(filepath+'data/processed_curves/'+f)
-        df['filename'] = f
-        light_curves.append(df)
+    # define mask value
+    mask_val = 3141592
 
-    if save:
-        print("saving raw data...")
+    # define how long each light curve df should be
+    lc_df_length = 180
 
-        # light_curves=np.array(light_curves)
-
-        all_transients.to_pickle(filepath+'data/all_transients.pkl')
-
-        with open(filepath+'data/light_curves.pkl', "wb") as f:
-            pkl.dump(light_curves, f)
-
-
-def load_raw_data():
-    """
-    Loads data from saved pickle files
-    """
-    print("loading raw data..")
-
-    all_transients = pd.read_pickle(filepath+'data/all_transients.pkl')
-    supernovae = pd.read_pickle(filepath+'data/supernovae.pkl')
-
-    with open(filepath+'data/light_curves.pkl', "rb") as f:
-        light_curves = pkl.load(f)
-
-    return {'all_transients': all_transients, 'light_curves': light_curves}
-
-
-def create_raw_dataframe(save=True):
-    """
-    Create DataFrame used for NN+classifier
-
-    DF: (Filename,Time, Flux, Error, Mag at Discovery, Class)
-    """
-    print('creating raw dataframe')
-
-    light_curves = load_raw_data()['light_curves']
-    all_transients = load_raw_data()['all_transients']
-
-    df_dict = []
-
-    # define columns
-    columns = ['Filename', 'Time', 'Flux',
-               'Error', 'Mag at Discovery', 'Class']
-    
-    
-    # loop through AT and grab necessary data
-    at_files = all_transients.loc[:, 'IAU name']
-    at_class = all_transients.loc[:, 'classification']
-    at_mags = all_transients.loc[:, 'mag at discovery']
-
-    # change classificiations into numbers
+    # define class encodings
     SNIa = {'SNIa','SNI','SNIa-91T-like','SNIa-91bg-like','SNIa-pec', 'SNIa-SC'}
     SNIbc = {'SNIbn','SNIb/c','SNIb','SNIc','SNIc-BL'}
     SNIi ={'SNII', 'SNIIb','SNIIP','SNII-pec','SNIIn'}
     other = {'CV', 'SLSN-I','AGN', 'FRB','Mdwarf', 
                         'Nova', 'Other', 'Varstar'}
-
-
     def modify_class(name):
         if name in SNIa:
             return 0
@@ -120,326 +70,92 @@ def create_raw_dataframe(save=True):
         else:
             return 4
 
-    at_dict = {}
+    # reads through all light curve files
+    light_curves = []
+    for f in tqdm(lc_files):
+        # filtered DF
+        filtered_df = pd.DataFrame(columns=['Filename','Time', 'Filter ID', 'Flux', 'Error','Class'])
 
-    for i in range(len(at_files)):
-        at_dict[at_files[i]] = (at_mags[i], at_class[i])
+        #read light curve from file
+        df = pd.read_csv(filepath+'data/processed_curves/'+f)
+        
+        # num of timesteps
+        num_steps = len(df['relative_time'])
 
-    # loop through light_curve file
-    for lc in tqdm(light_curves):
-        # extract filename, flux, error, time
-        flux = np.array(lc.loc[:, 'cts'])
-        error = np.array(lc.loc[:, 'e_cts'])
-        filename = lc.loc[:, 'filename'][0]
-        time = np.array(lc.loc[:, 'relative_time'])
-
-        # process filename to be just abreviation ex: 2018evo
+         # process filename to be just abreviation ex: 2018evo
         name_split = filename.split('_')
         name_abr = name_split[1]
 
         # grab mag and class
-        mag = at_dict[name_abr][0]
-        if at_dict[name_abr][1] =='SN':
+        if name_abr =='SN':
             continue
-        classif = modify_class(at_dict[name_abr][1])
-
-        # add data to DataFrame dict list
-        df_dict.append({'Filename': name_abr, 'Time': time, 'Flux': flux, 'Error': error,
-                        'Mag at Discovery': mag, 'Class': classif})
-
-    # create dataframe
-    df = pd.DataFrame(df_dict, columns=columns)
-
-    df = remove_outliers(df)
-
-    if save:
-        print('saving raw DF')
-        # save dataframe
-        df.to_pickle(filepath+'data/raw_df.pkl')
-
-    return df
+        classif = modify_class(name_abr)
 
 
-def load_raw_dataframe():
-    print('loading raw df...')
-    return pd.read_pickle(filepath+'data/raw_df.pkl')
+        # checks for Filter ID processing
+        for i in range(num_steps):
+            
+            # if all missing data, skip this timestep
+            if df[i,'tess_flux'] ==np.NAN and df[i,'r_flux']==np.NAN and df[i,'g_flux'] == np.NAN:
+                continue
+            
+            # TESS check
+            if df[i,'tess_flux'] != np.NAN:
+                # extract vals
+                time=df.loc[i,'relative_time']
+                filt_id = tess_id
+                flux = df.loc[i,'tess_flux']
+                error =df.loc[i,'tess_uncert']
+
+                # add to DF
+                filtered_df[-1]=[f,time,filt_id,flux,error,classif]
+
+            # Ztf-r check
+            if df[i,'r_flux'] != np.NAN:
+                # extract vals
+                filename = f
+                time=df.loc[i,'relative_time']
+                filt_id = ztf_r_id
+                flux = df.loc[i,'r_flux']
+                error =df.loc[i,'r_uncert']
+
+                # add to DF
+                filtered_df[-1]=[f,time,filt_id,flux,error,classif]
+
+            # Ztf-g check
+            if df[i,'g_flux'] != np.NAN:
+                # extract vals
+                filename = f
+                time=df.loc[i,'relative_time']
+                filt_id = ztf_g_id
+                flux = df.loc[i,'g_flux']
+                error =df.loc[i,'g_uncert']
+
+                # add to DF
+                filtered_df[-1]=[f,time,filt_id,flux,error,classif]
+
+        # augment data length if needed
+        while(len(filtered_df['filename'])<180):
+            filtered_df[-1]=[f,mask_val,mask_val,mask_val,mask_val,classif]
+
+        # append final df for this light curve
+        light_curves.append(filtered_df)
 
 
-def create_binned_dataframe(save=True):
-    """
-    Creates Binned DataFrame.
-
-    Bins light curves to 1 day intervals.
-
-    binned_data.shape = (3857,13-30,6) -> filename, time, flux, error, mag, class
-    """
-    print("binning data...")
-
-    # deep copy of old df w/out outliers
-    old_df = load_raw_dataframe().copy()
-
-    # define columns
-    columns = ['Filename', 'Time', 'Flux',
-               'Error', 'Mag at Discovery', 'Class']
-
-    binned_dicts = []
-
-    # extract features to be binned
-    lc_flux = old_df.loc[:, 'Flux']
-    lc_error = old_df.loc[:, 'Error']
-    lc_time = old_df.loc[:, 'Time']
-    lc_name = old_df.loc[:, 'Filename']
-    lc_class = old_df.loc[:, 'Class']
-    lc_mag = old_df.loc[:, 'Mag at Discovery']
-
-    # loop through each light curve to bin
-    for i in tqdm(range(len(lc_flux))):
-
-        # extract time, flux, error vals and singular name, classification, mag
-        flux = lc_flux[i]
-        error = lc_error[i]
-        time = lc_time[i]
-        name_abr = lc_name[i]
-        classif = lc_class[i]
-        mag = lc_mag[i]
-
-        if i == 0:
-            print('len of raw time,flux, error, mag: ',
-                  time.size, flux.size, error.size)
-
-        # starting time
-        curr_time = round(time[0] * 2)/2.0
-
-        # new binned arrays
-        binned_features = {'time': [], 'flux': [], 'error': []}
-
-        # sub-interval sums
-        flux_sum = 0.0
-        count = 0
-        sub_error = np.array([])
-
-        low_bound=math.floor(curr_time)
-
-        for t in range(len(time)):
-
-            # if time goes to next day then start new bin interval
-            if round(time[t] * 2) / 2.0 != curr_time:
-
-                #print(curr_time,round(time[t])-0.5)
-
-                flux_mean = flux_sum/count
-                err_bin = np.sqrt(np.mean(sub_error**2))
-
-                # append binned vals
-                binned_features['time'].append(curr_time)
-                binned_features['flux'].append(flux_mean)
-                binned_features['error'].append(err_bin)
-
-                # set new current day
-                curr_time = round(time[t] * 2)/2.0
-                #low_bound = math.floor(time[t])
-
-                # reset bins
-                flux_sum = 0.0
-                count = 0
-                sub_error = np.array([])
-
-            flux_sum += flux[t]
-            count += 1
-            sub_error = np.append(sub_error, error[t])
-
-        # append the leftover
-        flux_mean = flux_sum/count
-        err_bin = np.sqrt(np.mean(sub_error**2))
-
-        # make numpy arrays
-        binned_features['time'] = np.array(binned_features['time'])
-        binned_features['flux'] = np.array(binned_features['flux'])
-        binned_features['error'] = np.array(binned_features['error'])
-
-        # add data to DataFrame dict list
-        binned_dicts.append({'Filename': name_abr, 'Time': binned_features['time'],
-                             'Flux': binned_features['flux'], 'Error': binned_features['error'],
-                            'Mag at Discovery': mag, 'Class': classif})
-
-        # check time test
-        if i == 0:
-            print('len of binned time,flux, error: ', len(binned_dicts[i]['Time']),
-                  len(binned_dicts[i]['Flux']), len(binned_dicts[i]['Error']))
-
-    # create dataframe
-    binned_df = pd.DataFrame(binned_dicts, columns=columns)
-
-    #bin counts
-    counts = [len(days) for days in binned_df.loc[:,'Flux']]
-    print('Bin counts: ', Counter(counts))
+    # concat all dataframes into one
+    light_curve_df = pd.concat(light_curves)
 
     if save:
-        print('saving binned df...')
-        # save dataframe
-        binned_df.to_pickle(filepath+'data/binned_df.pkl')
+        print("saving raw data...")
 
-    return binned_df
+        all_transients.to_pickle(filepath+'data/all_transients.pkl')
 
-
-def load_binned_dataframe():
-    print('loading binned df...')
-    return pd.read_pickle(filepath+'data/binned_df.pkl')
+        light_curve_df.to_pickle(filepath+'data/light_curve_df.pkl')
 
 
-def create_aug_dataframe(save=True):
-    """
-    Creates a DataFrame for augmented data.
-
-    Takes binned data and augments it so that each light curve
-    has length of 29 days. Padded numbers assigned val = 0.0
-
-    aug_data.shape = (3857,30,6) -> filename, time, flux, error, mag, class
-    """
-    print("augmenting data...")
-
-    # deep copy of binned dataframe
-    old_df = load_binned_dataframe().copy()
-
-    # define columns
-    columns = ['Filename', 'Time', 'Flux',
-               'Error', 'Mag at Discovery', 'Class']
-
-    aug_dicts = []
-    
-    num_timesteps = 46
-
-    # extract features to be binned
-    lc_flux = old_df.loc[:, 'Flux']
-    lc_error = old_df.loc[:, 'Error']
-    lc_time = old_df.loc[:, 'Time']
-    lc_name = old_df.loc[:, 'Filename']
-    lc_class = old_df.loc[:, 'Class']
-    lc_mag = old_df.loc[:, 'Mag at Discovery']
-
-    # array to concat
-    concat = np.array([0.])
-
-    # loop through each light curve to bin
-    for i in tqdm(range(len(lc_flux))):
-
-        # extract flux, error, and mag vals
-        flux = np.array(lc_flux[i])
-        error = np.array(lc_error[i])
-        mag = np.array(lc_mag[i])
-        name_abr = lc_name[i]
-        classif = lc_class[i]
-        time = lc_time[i]
-
-        # normalize flux, error, and mag b/w [-1,1]
-        flux = preprocessing.normalize(flux.reshape(1, -1))[0]
-        error = preprocessing.normalize(error.reshape(1, -1))[0]
-        mag = preprocessing.normalize(mag.reshape(1, -1))[0]
-
-
-        # flux = 2 * (flux-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
-        # error = 2 * (error-np.min(error))/(np.max(error)-np.min(error)) - 1
-        # mag = 2 * (mag-np.min(flux))/(np.max(flux)-np.min(flux)) - 1
-
-        if i == 0:
-            print('normalized flux shape and vals: ', flux.shape, max(flux), min(flux))
-            print('old len of flux, error, mag: ',
-                  flux.size, error.size, mag.size)
-
-        old_length = len(flux)
-
-        # concat 0.0's until each feature has len = 30
-        if flux.size>num_timesteps:
-            flux = flux[:num_timesteps]
-        elif flux.size<num_timesteps:
-            while (flux.size != num_timesteps):
-                flux = np.concatenate((flux, concat))
-
-        if error.size>num_timesteps:
-            error = error[:num_timesteps]
-        elif error.size<num_timesteps:
-            while (error.size != num_timesteps):
-                error = np.concatenate((error, concat))
-
-        mag = np.repeat(mag, old_length)
-
-        if mag.size>num_timesteps:
-            mag = mag[:num_timesteps]
-        elif mag.size<num_timesteps:
-            while (mag.size != num_timesteps):
-                mag = np.concatenate((mag, concat))
-
-        # add data to DataFrame dict list
-        aug_dicts.append({'Filename': name_abr, 'Time': time,
-                          'Flux': flux, 'Error': error,
-                          'Mag at Discovery': mag, 'Class': classif})
-
-        # check lengths test
-        if i == 0:
-            check = aug_dicts[i]
-            print('new len of flux, error, mag: ', len(check['Flux']), len(check['Error']),
-                  len(check['Mag at Discovery']))
-
-    # create dataframe
-    aug_df = pd.DataFrame(aug_dicts, columns=columns)
-
-    if save:
-        print('saving augmented df...')
-        # save dataframe
-        aug_df.to_pickle(filepath+'data/aug_df.pkl')
-
-    return aug_df
-
-
-def load_aug_dataframe():
-    print('loading aug df...')
-    return pd.read_pickle(filepath+'data/aug_df.pkl')
-
-
-def plot_random_binned_data():
-
-    # load binned and raw df
-    raw_df = load_raw_dataframe()
-    binned_df = load_binned_dataframe()
-
-    # number of lc's
-    num_lc = raw_df.shape[0]
-    print('number of lcs (should match): ', num_lc, binned_df.shape[0])
-
-    # choose 5 random lc's
-    for _ in range(5):
-
-        indx = random.randint(0, num_lc-1)
-
-        print('indx: ', indx)
-
-        raw_lc = raw_df.iloc[indx]
-        binned_lc = binned_df.iloc[indx]
-
-       # print(raw_lc['Filename'])
-
-        plt.figure()
-
-        title = raw_lc['Filename']
-
-        print(len(raw_lc['Time']), len(raw_lc['Flux']))
-
-        # raw data
-        plt.errorbar(list(raw_lc['Time']),
-                     raw_lc['Flux'], color='r', alpha=0.5)
-
-        plt.title('raw vs binned')
-
-        # binned data
-        plt.errorbar(binned_lc['Time'], binned_lc['Flux'],
-                     binned_lc['Error'], color='b')
-
-        plt.legend(['raw', 'binned'])
-
-        # save image
-        plt.savefig(filepath+'plots/raw_err_'+title+'.png', facecolor='white')
-
-        plt.show()
+def load_light_curve_dataframe():
+    print('loading light curve df...')
+    return pd.read_pickle(filepath+'data/light_curves_df.pkl')
 
 
 def plot_specific(df_type, filename):
@@ -481,48 +197,7 @@ def plot_specific(df_type, filename):
     print('indx: ', indx)
 
 
-def remove_outliers(df):
-    """
-    Outputs number of outliers caused by light scattering
-    """
-    print('removing outliers...')
-    #df = load_raw_dataframe()
-
-    print('old df len: ', len(df))
-
-    indxs = []
-
-    fluxs = df.loc[:, 'Flux']
-    classes = df.loc[:,'Class']
-
-    count = 0
-
-    for i in tqdm(range(len(fluxs))):
-
-        flux = fluxs[i]
-
-        outlier = False
-
-        for f in flux:
-            if f > 1e6 or f < -1e6:
-                outlier = True
-                break
-
-        if outlier:
-            indxs.append(i)
-            count += 1
-
-    print('num of outliers: ', count)
-
-    new_df = df.drop(labels=indxs)
-    new_df = new_df.reset_index(drop=True)
-
-    print('new df len: ', len(new_df))
-
-    return new_df
-
-
-def prepare_data(save=True):
+def prepare_NN_data(save=True):
 
     NN_features = ('Flux', 'Error', 'Mag at Discovery')
 
@@ -571,18 +246,10 @@ def prepare_data(save=True):
 def main():
 
     # read raw data
-   # read_raw_data()
+    read_raw_data()
 
-    # build df's
-    # create_raw_dataframe()
-    #create_binned_dataframe()
-    create_aug_dataframe()
-
-    # plot binned vs raw
-    plot_random_binned_data()
 
     # plot_specific('raw','2021aaeb')
-#    find_outliers()
     prepare_data()
 
 
