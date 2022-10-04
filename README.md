@@ -1,4 +1,4 @@
-# Tess-ZTF-transient-classification
+# TESS-ZTF-Transient-Classification
 
 Research project in the MIT Kavli Institute for Astrophysics and Space Research.
 
