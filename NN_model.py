@@ -371,9 +371,7 @@ class RVAE:
         plt.ylabel('loss')
         plt.xlabel('epoch')
         plt.legend(['train', 'val'], loc='upper left')
-        plt.savefig(self.filepath+'plots/training_history.png',
-                    facecolor='white')
-
+        plt.show()
         return model
 
     def test_model(self, rvae, x_test, y_test):
@@ -431,8 +429,7 @@ class RVAE:
         ax2.set_title('predicted light curve')
 
         # save image
-        fig.savefig(self.filepath+'plots/raw_vs_pred' +
-                    str(num)+'.png', facecolor='white')
+        fig.show()
 
     def t_SNE_plot(self, light_curves, encoder):
         """
