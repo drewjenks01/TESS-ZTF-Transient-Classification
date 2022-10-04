@@ -1,135 +1,90 @@
 # %%
-
 import random
-import sys
-
 import keras.backend as K
 import matplotlib.pyplot as plt
 import numpy as np
 import tensorflow as tf
 from keras import Input, Model
 from keras.callbacks import EarlyStopping
-from keras.layers import (GRU, BatchNormalization, Dense, Embedding, Lambda,
-                          Layer, Masking, RepeatVector, TimeDistributed,
-                          concatenate)
-from keras.models import load_model
+from keras.layers import (GRU, Dense, Lambda, Masking,
+                          RepeatVector, TimeDistributed, concatenate)
 from keras.optimizers import adam_v2
 from sklearn.manifold import TSNE
-from sklearn.model_selection import train_test_split
-from tcn import TCN
 from tensorflow.python.framework.ops import disable_eager_execution
 from tqdm import tqdm
 
-from pre_process import load_aug_dataframe
+print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
+gpu_options = tf.compat.v1.GPUOptions(allow_growth=True)
+session = tf.compat.v1.InteractiveSession(
+    config=tf.compat.v1.ConfigProto(gpu_options=gpu_options))
 
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
 
-
 disable_eager_execution()
 """
-To test:
-    - LSTM, TCN
+unique classifiers:  SNIa (0) = {'SNIa', 'SNI', 'SNIa-91T-like',
+                                'SNIa-91bg-like', 'SNIa-pec', 'SNIa-SC'}
+                     SNIbc (1) = {'SNIbn', 'SNIb/c', 'SNIb', 'SNIc', 'SNIc-BL'}
+                     SNIi (2) = {'SNII', 'SNIIb', 'SNIIP', 'SNII-pec', 'SNIIn'}
+                     Unclassified (3)
+                     other (4) = {'CV', 'SLSN-I', 'AGN', 'FRB', 'Mdwarf',
+             '                  Nova', 'Other', 'Varstar'}
 
-Notes:
-    - old model structrue 2x faster
-
-Best model so far:
-    - 250 epochs
-    - 128 batch size
-    - latent dim =35
-    - 120 units each
-    - all normalized
-    - mask func in Lambda and GRU
-    - connected NN
-    - 1e-3 lr
-    - negative loss
-    - half day bins
-    - final loss: -4.4278
-
-
-
-unique classifiers:  {('SNI','SNIa','SNIa-91T-like','SNIa-91bg-like','SNIa-pec', 'SNIa-SC'): 0,
-                      ('SNIbn','SNIb/c','SNIb','SNIc','SNIc-BL'): 1,
-                      ('SNII', 'SNIIb','SNIIP','SNII-pec','SNIIn'): 2, 
-                       ('CV', 'SLSN-I','AGN', 'FRB','Mdwarf', 
-                        'Nova', 'Other', 'Varstar'): 3,
-                        'Unclassified': 4 }
-
-class counts:  {0: 245, 1: 15, 2: 62, 3: 20, 4: 2026}
-
+class counts:  {3: 529, 0: 231, 2: 24, 1: 12, 4: 9}
 """
-
-
-class InputReduction(Layer):
-    def __init__(self, mask):
-        super(InputReduction, self).__init__()
-        self.masker = mask
-
-    def call(self, inputs):
-        m = self.masker
-        print(inputs.shape)
-        tf.print(m, output_stream=sys.stdout)
-        inputs = tf.boolean_mask(inputs, m)
-        print(inputs.shape)
-
-        return inputs
 
 
 class RVAE:
     """ Recurrent Variational Autoencoder """
 
-    def __init__(self):
+    def __init__(self, prepped_data):
 
         # training epochs
-        self.epochs = 200
+        self.epochs = 5
 
         # batch size
-        self.batch_size = 128
-
-        # save and load filepath
-        self.filepath = '/Users/drewj/Documents/Urops/Muthukrishna/'
+        self.batch_size = 64
 
         # optimizer
-        self.optimizer = adam_v2.Adam(learning_rate=1e-3, beta_1=0.9, beta_2=0.999,
-                                      decay=0)
+        self.optimizer = adam_v2.Adam(learning_rate=1e-2)
 
         # set the dimension of the latent vector
-        self.latent_dim = 35
+        self.latent_dim = 30
 
         # input to first enc, second dec layer
-        self.gru_one = 120
+        self.gru_one = 175
 
         # input to first dec, second enc layer
-        self.gru_two = 120
+        self.gru_two = 150
 
         # load prepared data (acts as input)
-        self.prepared_data = np.load(self.filepath+'data/prepared_data.npy')
+        self.prepared_data = prepped_data
 
         # number of input features
         self.num_feats = self.prepared_data.shape[2]
 
-        self.num_timesteps = 46
+        # number of timesteps
+        self.num_timesteps = self.prepared_data.shape[1]
 
-        # dimension of the input space for enc
-        # X.shape = (..., 30, ..)
+        # dimension of the input space for encoder
         self.enc_input_shape = (self.num_timesteps, self.num_feats)
 
         # number of light curves
-        self.num_lcs = 3155
+        self.num_lcs = self.prepared_data.shape[0]
 
         # indxs for test and train
         self.train_indx = set()
         self.test_indx = set()
 
-        # test and train data
-        self.train_test_data = self.split_prep_data()
+        # mask value
+        self.mask_val = 0.0
 
     def build_disconnected_model(self):
         """
         Builds entire RVAE model with encoder and decoder as two seperate Models
 
         Returns:
-            model : v=rvae model
+            model : rvae model
         """
 
         # BUILD ENCODER
@@ -219,7 +174,8 @@ class RVAE:
         Builds entire RVAE model connected as one model
 
         Returns:
-            model : v=rvae model
+            model: full rvae model
+            encoder: just encoder from model (used for testing and classification)
         """
 
         # BUILD ENCODER
@@ -229,17 +185,16 @@ class RVAE:
         enc_input = Input(shape=self.enc_input_shape)
 
         # masking layer to get rid of unwanted values
-        mask = Masking(mask_value=0.)
+        mask = Masking(mask_value=self.mask_val)
 
+        # get mask for future layer
         mask_compute = mask(enc_input)
-
-        mask_output = mask.compute_mask(enc_input)
 
         # first recurrent layer
         gru1 = GRU(self.gru_one, activation='tanh',
                    recurrent_activation='hard_sigmoid', return_sequences=True, name='gru1')(mask_compute)
 
-        #bn1 = BatchNormalization()(gru1)
+        mask_output = mask.compute_mask(gru1)
 
         # second recurrent layer
         encoded = GRU(self.gru_two, activation='tanh',
@@ -265,13 +220,18 @@ class RVAE:
         print("building decoder...")
         repeater = RepeatVector(self.num_timesteps, name='rep')(z)
 
-        repeater._keras_mask = mask_output
+        # time and filter id vals
+        input_two = Input(shape=(self.num_timesteps, 2))
+
+        # concat timestep back
+        concat = concatenate((repeater, input_two), axis=-1)
+
+        # add mask from original input
+        concat._keras_mask = mask_output
 
         # first recurrent layer
         x = GRU(self.gru_two, activation='tanh',
-                recurrent_activation='hard_sigmoid', return_sequences=True, name='gru5')(repeater)
-
-       # bn = BatchNormalization()(x)
+                recurrent_activation='hard_sigmoid', return_sequences=True, name='gru5')(concat)
 
         # second recurrent layer
         x = GRU(self.gru_one, activation='tanh',
@@ -282,30 +242,22 @@ class RVAE:
             Dense(1, activation='tanh', input_shape=(None, 1)), name='td')(x)
 
         # BUILD MODEL
-        rvae = Model(enc_input, dec_output)
+        rvae = Model([enc_input, input_two], dec_output)
         rvae.summary()
 
-        # for i, l in enumerate(decoder.layers):
-        #     print(f'layer {i}: {l}')
-        #     print(f'has input mask: {l.input_mask}')
-        #     print(f'has output mask: {l.output_mask}')
-
+        # used to see the masking of the layers within the model
         for i, l in enumerate(rvae.layers):
             print(f'layer {i}: {l}')
             print(f'has input mask: {l.input_mask}')
             print(f'has output mask: {l.output_mask}')
 
         # define loss
-        custom_loss = self.vae_loss(z_mean, z_log_var)
+        vae_loss = self.vae_loss(z_mean, z_log_var)
 
         # compile model
-        rvae.compile(optimizer=self.optimizer, loss=custom_loss)
+        rvae.compile(optimizer=self.optimizer, loss=vae_loss)
 
-        es = EarlyStopping(monitor='val_loss', min_delta=0, patience=20,
-                           verbose=1, mode='min', baseline=None,
-                           restore_best_weights=True)
-
-        return rvae, encoder, es
+        return rvae, encoder
 
     def sampling(self, samp_args):
         z_mean, z_log_sigma = samp_args
@@ -333,15 +285,8 @@ class RVAE:
         kl_loss = - 0.5 * K.mean(1 + K.flatten(encoded_log_sigma) -
                                  K.square(K.flatten(encoded_mean)) - K.exp(K.flatten(encoded_log_sigma)), axis=-1)
 
-       # @tf.function
-
         def lossFunction(yTrue, yPred):
             reconstruction_loss = K.log(K.mean(K.square(yTrue - yPred)))
-            #reconstruction_loss = 30*K.mean(K.square(yTrue - yPred))
-
-            # tf.print('rec: ',reconstruction_loss,output_stream=sys.stdout)
-            # tf.print('kl: ', kl_loss,output_stream=sys.stdout)
-
             return reconstruction_loss + kl_loss
 
         return lossFunction
@@ -354,7 +299,7 @@ class RVAE:
         print("Splitting data into train and test...")
 
         # prepared out (only flux)
-        prep_out = self.prepared_data[:, :, 0].reshape(
+        prep_out = self.prepared_data[:, :, 2].reshape(
             self.num_lcs, self.num_timesteps, 1)
 
         prep_inp = self.prepared_data
@@ -366,8 +311,8 @@ class RVAE:
 
         # calc the # of light curves for train vs test
         num_lcs = len(prep_inp)
-        train_perc = round(0.75 * num_lcs)
-        test_perc = num_lcs-train_perc
+        train_perc = round(1.0 * num_lcs)
+        test_perc = round(num_lcs*0.2)
 
         # save random indices for training
         while len(self.train_indx) != train_perc:
@@ -375,10 +320,10 @@ class RVAE:
             self.train_indx.add(indx)
 
         # save random indices for testint -> no duplicates from training
-        while len(self.test_indx) != test_perc:
+        while len(self.test_indx) <= test_perc:
             indx = random.randint(0, num_lcs-1)
-            if indx not in self.train_indx:
-                self.test_indx.add(indx)
+            # if indx not in self.train_indx:
+            self.test_indx.add(indx)
 
         # extract training data
         for ind in self.train_indx:
@@ -399,39 +344,26 @@ class RVAE:
         print('shape of prep_inp and x_train:', prep_inp.shape, x_train.shape)
         print('shape of prep_out and y_train:', prep_out.shape, y_train.shape)
 
-        return [x_train, x_test, y_train, y_test]
+        return x_train, x_test, y_train, y_test
 
-    def save_model(self, model, name):
-        """
-        Saves the model
-        """
-        print('saving model: ', name)
-        model.save(self.filepath+name)
-
-    def get_encoder(self):
-        """
-        Loads the encoder model
-        """
-        enc = load_model(self.filepath+'model/encoder', custom_objects={'sampling': self.sampling,
-                                                                        'lossFunction': self.customLoss}, compile=False)
-
-        return enc
-
-    def train_model(self, model, es):
+    def train_model(self, model, x_train, x_test, y_train, y_test):
         """
         Trains the NN on training data
 
-        Returns the trained model
+        Returns the trained model.
         """
         # fit model
-        train_inp = self.train_test_data[0]
-        train_out = self.train_test_data[2]
-        test_inp = self.train_test_data[1]
-        test_out = self.train_test_data[3]
+        train_inp_two = x_train[:, :, :2]
+        assert (train_inp_two.shape == (
+            x_train.shape[0], x_train.shape[1], 2))
+
+        test_inp_two = x_test[:, :, :2]
+        assert (test_inp_two.shape == (
+            x_test.shape[0], x_test.shape[1], 2))
 
         print('fitting model...')
-        history = model.fit(train_inp, train_out, epochs=self.epochs, batch_size=self.batch_size,
-                            validation_data=(test_inp, test_out), verbose=1, callbacks=[es], shuffle=False)
+        history = model.fit([x_train, train_inp_two], y_train, epochs=self.epochs, batch_size=self.batch_size,
+                            validation_data=([x_test, test_inp_two], y_test), verbose=1, shuffle=False)
 
         plt.plot(history.history['loss'])
         plt.plot(history.history['val_loss'])
@@ -444,51 +376,32 @@ class RVAE:
 
         return model
 
-    def test_model(self, rvae=None):
+    def test_model(self, rvae, x_test, y_test):
         """
-        Uses test data to and NN to predict light curve decodings
+        Uses test data to and NN to predict light curve decodings.
+
+        Plots reconstructed light curved from the model prediction vs the orignal curve.
         """
+        test_inp_two = x_test[:, :, :2]
 
-        test_inp = self.train_test_data[1][:100]
-        test_inp = test_inp.reshape(-1, 1, self.num_timesteps, self.num_feats)
-        test_out = self.train_test_data[3][:100]
+        print('test_inp_one shape: ', x_test.shape)
+        print('test_inp_two shape: ', test_inp_two.shape)
 
-        # load model if none passed
-        if not rvae:
-            print('loading model for testing...')
-            rvae = load_model(self.filepath+'model/rvae', custom_objects={'sampling': self.sampling,
-                                                                          'lossFunction': self.customLoss})
         rvae.summary()
 
-        # for each light curve, use model to predict decoded output
-        # and plot against raw data to compare
-       # avg_mse=()
-        inpt_length = len(test_inp)
-        indxs = set()
-        for i in range(9):
-            indxs.add(random.randint(0, inpt_length-1))
-
         print('predicting...')
-        for i in tqdm(range(len(test_inp))):
+        for i in tqdm(range(10)):
 
             # predicted flux
-            predicted = rvae.predict(test_inp[i])[0]
+            predicted = rvae.predict([x_test[i].reshape(-1, self.num_timesteps, 4),
+                                     test_inp_two[i].reshape(-1, self.num_timesteps, 2)])[0]
 
             # if first prediction, print the prediction
             if i == 0:
                 print('shape of predicted data: ', predicted.shape)
 
             # if one of first 10 predictions, plot prediction vs true
-            if i in indxs:
-                self.plot_true_pred(test_out[i], predicted, i)
-
-            # calulcate mse
-            # mse = np.mean(np.square(predicted-test_out[i]))
-            # avg_mse.add(mse)
-            #print('mse of test '+str(i)+': ',mse)
-
-       # avg_mse=np.array(avg_mse)
-       # print('avg mse of'+str(len(test_inp))+ 'tests: ',np.mean(avg_mse))
+            self.plot_true_pred(y_test[i], predicted, i)
 
         print("done predicting")
 
@@ -521,67 +434,50 @@ class RVAE:
         fig.savefig(self.filepath+'plots/raw_vs_pred' +
                     str(num)+'.png', facecolor='white')
 
-    def t_SNE_plot(self):
-        # display a 2D plot of the light curves in the latent space
+    def t_SNE_plot(self, light_curves, encoder):
+        """
+        Constructs 2D plots of light curves in latent space.
+        """
         print('using t-SNE...')
-        aug_df = load_aug_dataframe()
 
-        #labeled
-        indxs = (aug_df.loc[aug_df.loc[:, 'Class'] != 4].index)
-        labels = [aug_df.loc[i,'Class'] for i in indxs]
-        labeled_data =np.array( [self.prepared_data[i] for i in indxs])
+        # extract all class outputs and inputs
+        labels = np.array([c.loc[0, 'Class']
+                          for c in light_curves if c.loc[0, 'Class'] != 3])
+
+        # extract all training label indexes
+        indxs = [i for i in range(len(labels)) if labels[i] != 3]
+
+        labeled_data = np.array([self.prepared_data[i] for i in indxs])
 
         encoder = self.get_encoder()
         _, _, z = tqdm(encoder.predict(labeled_data))
 
-        t_sne = TSNE(n_components=2, learning_rate='auto', init='random').fit_transform(z)
-        print('t-sne shape: ',t_sne.shape)
+        t_sne = TSNE(n_components=2, learning_rate='auto',
+                     init='random').fit_transform(z)
+        print('t-sne shape: ', t_sne.shape)
 
         plt.figure(figsize=(12, 10))
         plt.scatter(t_sne[:, 0], t_sne[:, 1], c=labels)
         plt.colorbar()
         plt.title("t-SNE with only labeled data")
-        plt.savefig(self.filepath+'plots/labeled-t-sne-latent-space.png', facecolor='white')
+        plt.show()
 
-
-        #include unlabeled
-        labels = aug_df.loc[:,'Class']
+        # include unlabeled data
+        labels = np.array([c.loc[0, 'Class'] for c in light_curves])
         data = self.prepared_data
 
         encoder = self.get_encoder()
         _, _, z = tqdm(encoder.predict(data))
 
-        t_sne = TSNE(n_components=2, learning_rate='auto', init='random').fit_transform(z)
-        print('t-sne shape: ',t_sne.shape)
+        t_sne = TSNE(n_components=2, learning_rate='auto',
+                     init='random').fit_transform(z)
+        print('t-sne shape: ', t_sne.shape)
 
         plt.figure(figsize=(12, 10))
         plt.scatter(t_sne[:, 0], t_sne[:, 1], c=labels)
         plt.colorbar()
         plt.title("t-SNE with labeled and unlabeled data")
-        plt.savefig(self.filepath+'plots/unlabeled-t-sne-latent-space.png', facecolor='white')
-
-
-def main():
-
-    # initialize rvae
-    rvae = RVAE()
-
-#     # build the model
-#     model, encoder, es = rvae.build_connected_model()
-
-#     # train model
-#     trained_rvae = rvae.train_model(model, es)
-
-#     # save model
-#     rvae.save_model(encoder, 'model/encoder')
-#    # rvae.save_model(trained_rvae, 'model/rvae')
-
-#     # load model
-#     rvae.test_model(trained_rvae)
-    rvae.t_SNE_plot()
-
-
-if __name__ == "__main__":
-    main()
+        #plt.savefig(self.filepath+'plots/unlabeled-t-sne-latent-space.png', facecolor='white')
+        plt.show()
 
 # %%
