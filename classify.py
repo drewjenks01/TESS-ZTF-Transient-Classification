@@ -1,43 +1,36 @@
 # %%
 from NN_model import RVAE
-from pre_process import load_aug_dataframe, load_raw_dataframe
-from imblearn.ensemble import EasyEnsembleClassifier,BalancedRandomForestClassifier
-from sklearn.ensemble import RandomForestClassifier
-from sklearn.model_selection import train_test_split, cross_validate
-from sklearn.metrics import confusion_matrix, make_scorer
-from sklearn import metrics
+from imblearn.ensemble import BalancedRandomForestClassifier
 import pandas as pd
 import numpy as np
 import random
 import joblib
 from collections import Counter
 import tensorflow as tf
+from sklearn.metrics import plot_confusion_matrix
+import matplotlib.pyplot as plt
 tf.compat.v1.logging.set_verbosity(tf.compat.v1.logging.ERROR)
+print("Num GPUs Available: ", len(tf.config.list_physical_devices('GPU')))
 
 
 class RandomForest:
 
-    def __init__(self):
+    def __init__(self, light_curves, prepared_data, encoder):
 
         # initialize rvae
-        self.rvae = RVAE()
+        self.rvae = RVAE(prepared_data)
 
-        self.encoded_dim = 35
+        # encoded dimension from NN
+        self.encoded_dim = self.rvae.latent_dim
 
         # get training encoder
-        self.encoder = self.rvae.get_encoder()
-
-        # filepath
-        self.filepath = '/Users/drewj/Documents/Urops/Muthukrishna/data/'
+        self.encoder = encoder
 
         # augmented data frame
-        self.aug_df = load_aug_dataframe()
+        self.light_curves = light_curves
 
-        # prepared data (Flux, Error, Mag)
-        self.prepared_data = np.load(self.filepath+'prepared_data.npy')
-
-        # test and train data
-        self.train_test_data = self.create_test_train()
+        # prepared data
+        self.prepared_data = prepared_data
 
     def create_test_train(self):
         """
@@ -47,13 +40,13 @@ class RandomForest:
         print("Splitting data for RF...")
 
         # extract all class outputs and inputs
-        prep_out = self.aug_df.loc[:, 'Class']
+        prep_out = np.array([c.loc[0, 'Class'] for c in self.light_curves])
         prep_inp = self.prepared_data
 
         # extract all training label indexes
-        train_indx = list(self.aug_df[self.aug_df.loc[:, 'Class'] != 4].index)
-        unclassified_indx = list(
-            self.aug_df[self.aug_df.loc[:, 'Class'] == 4].index)
+        train_indx = [i for i in range(len(prep_out)) if prep_out[i] != 3]
+        unclassified_indx = [i for i in range(
+            len(prep_out)) if prep_out[i] == 3]
         num_indxs = len(train_indx)
 
         x_train = []
@@ -90,17 +83,13 @@ class RandomForest:
         print('shape of y_train and y_test:', y_train.shape, y_test.shape)
         print('shape of x_unclassified:', x_unclassified.shape)
 
-        return [x_train, x_test, y_train, y_test, x_unclassified]
+        return x_train, x_test, y_train, y_test, x_unclassified
 
-    def make_encodings(self, save=True):
+    def make_encodings(self, x_train, x_test, x_unclassified):
         """
         Uses trained encoder to produce 1D encodings of light curves to be used for RF training
         """
         print('making encodings...')
-        # extract x vals
-        x_train = self.train_test_data[0]
-        x_test = self.train_test_data[1]
-        x_unclassified = self.train_test_data[4]
 
         # encode training light curves
         x_train_enc = self.encoder.predict(
@@ -118,12 +107,9 @@ class RandomForest:
         print('shape of encodings: ', x_train_enc.shape,
               x_test_enc.shape, x_unclassified_enc.shape)
 
-        if save:
-            np.save(self.filepath+'x_train_enc.npy', x_train_enc)
-            np.save(self.filepath+'x_test_enc.npy', x_test_enc)
-            np.save(self.filepath+'x_unclassified_enc.npy', x_unclassified_enc)
+        return x_train_enc, x_test_enc, x_unclassified_enc
 
-    def build_classier(self, save=True):
+    def build_classier(self, x_train, x_test, x_unclassified, y_train, y_test):
         """
         Trains a RF classifier and tests its prediction accuracy
         """
@@ -131,13 +117,6 @@ class RandomForest:
 
         # initialize random forest classifier
         rf = BalancedRandomForestClassifier(n_estimators=20)
-
-        # train using train data
-        x_train = np.load(self.filepath+'x_train_enc.npy')
-        x_test = np.load(self.filepath+'x_test_enc.npy')
-        x_unclassified = np.load(self.filepath+'x_unclassified_enc.npy')
-        y_train = self.train_test_data[2]
-        y_test = self.train_test_data[3]
 
         # reshape
         x_train = x_train.reshape(-1, self.encoded_dim)
@@ -147,7 +126,7 @@ class RandomForest:
         print('shape of encodings: ', x_train.shape,
               x_test.shape, x_unclassified.shape)
 
-        rf.fit(x_train, y_train)
+        # fit to data
         rf.fit(x_train, y_train)
 
         # performing predictions on the test dataset
@@ -160,43 +139,33 @@ class RandomForest:
         print("ACCURACY OF THE MODEl: ", 100 *
               round(rf.score(x_test, y_test), 2), '%')
 
-        # Create confusion matrix
+       # Create confusion matrix
         conf_mat = pd.crosstab(y_test, y_pred, rownames=[
                                'Actual Species'], colnames=['Predicted Species'])
 
         print('Confusion Matrix:')
         print(conf_mat.to_string())
 
+        plot_confusion_matrix(rf, x_test, y_test)
+        plt.savefig(
+            '/Users/drewj/Documents/Urops/Muthukrishna/plots/confusion-matrix.png', facecolor='white')
+
         print('Unlabeled Classifications: ')
         unlabeled = rf.predict(x_unclassified)
         print(unlabeled)
         print(Counter(unlabeled))
 
-        if save:
-            # save
-            print('saving rf...')
-            joblib.dump(rf, self.filepath+"random_forest.joblib")
-
         return rf
 
-    def load_rf(self):
-        print('loading rf')
-        rf = joblib.load(self.filepath+"random_forest.joblib")
-        return rf
-
-    def classify(self, data=None, correct=None, filename=None):
+    def classify(self, original_curves, filename):
         """
         Classifies a specific light curve.
-
-        Data should not be encoded yet.
-
-        Pulls data from file if filename abbreviation passed.
         """
         print('classifying specific light curve data...')
 
         # load file data if file is passed
         if filename:
-            raw_df = load_raw_dataframe()
+            raw_df = original_curves
             names = raw_df.loc[:, 'Filename']
 
             for i in range(len(names)):
@@ -232,22 +201,4 @@ class RandomForest:
         print('Correct classification should be: ',
               classes[correct], ' (', correct, ')')
 
-
-def main():
-
-    # initialize random forest
-    rf = RandomForest()
-
-    # make lc encodings
-    rf.make_encodings()
-
-    # train rf
-    rf.build_classier()
-
-    # predict a specific light curve
-    rf.classify(filename='2018evo')
-
-
-if __name__ == "__main__":
-    main()
 # %%
