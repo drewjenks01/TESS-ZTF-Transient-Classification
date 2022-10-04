@@ -147,8 +147,6 @@ class RandomForest:
         print(conf_mat.to_string())
 
         plot_confusion_matrix(rf, x_test, y_test)
-        plt.savefig(
-            '/Users/drewj/Documents/Urops/Muthukrishna/plots/confusion-matrix.png', facecolor='white')
 
         print('Unlabeled Classifications: ')
         unlabeled = rf.predict(x_unclassified)
