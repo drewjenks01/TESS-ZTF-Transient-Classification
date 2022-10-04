@@ -1,12 +1,5 @@
 """
-This file is used for reading in data and making initial plots.
-
-To do:
-    - implement 1/2 day bins
-    - normalize mag?
-
-Qs:
-    - normalize before or after binned 
+This file is used for reading in data, processing.
 """
 # %%
 import pandas as pd
@@ -14,39 +7,39 @@ import numpy as np
 from os import walk
 import matplotlib.pyplot as plt
 import pickle as pkl
-import os
 from collections import Counter
-import math
 from sklearn.model_selection import train_test_split
 from tqdm import tqdm
-import random
-from sklearn import preprocessing
 
 
-filepath = '/Users/drewj/Documents/Urops/Muthukrishna/'
-lc_files = next(walk(
-    '/Users/drewj/Documents//Urops/Muthukrishna/data/processed_curves'), (None, None, []))[2]
-
-
-def read_raw_data(save=True):
+def read_raw_data(lc_path, transient_path):
     """
-    Loads all data files into Panda Dataframes.
-    Light curves are a numpy array full of dataframes.
+    Reads data from light curve and transient files, processes, 
+    and loads into Panda's DataFrame.
+
+    Args:
+        lc_path (str): Filepath to the folder containing light curve files
+        transient_path (str): Filepath to the file containing all transient info (IAU name, classification, etc.)
+
+    Returns:
+        light_curves (DataFrame): Light curves processed with class encodings and ZTF/TESS filter id's. ['Filename', 'Time', 'Filter ID', 'Flux', 'Error', 'Class'] colums
+        original_curves (DataFrame): All light curves. ['Filename', 'Time', 'Flux', 'Class'] columns
+        all_transients (DateFrame): Data from the transient file loaded into a DataFrame for easier access in other methods
     """
     print("reading raw data...")
 
+    # get all light curve files
+    lc_files = next(walk(lc_path), (None, None, []))[2]
+
     # extracts data from all transients file
-    all_transients = pd.read_csv(
-        filepath+'data/all_transients.csv')
-    # all_transients.columns = ['sector', 'ra', 'dec', 'mag at discovery', 'time of discovery', 'type of transient',
-    #                          'classification', 'IAU name', 'discovery survey', 'cam', 'ccd', 'column', 'row']
+    all_transients = pd.read_csv(transient_path)
 
     # define filter id's
     tess_id = 8
     ztf_r_id = 6
     ztf_g_id = 5
 
-    # define mask value
+    # define mask value (update in NN_model if changed)
     mask_val = 0.0
 
     # define class encodings
@@ -58,6 +51,9 @@ def read_raw_data(save=True):
              'Nova', 'Other', 'Varstar'}
 
     def modify_class(name):
+        """
+        Numerically encodes class names
+        """
         if name in SNIa:
             return 0
         elif name in SNIbc:
@@ -69,6 +65,7 @@ def read_raw_data(save=True):
         else:
             return 4
 
+    # used to hold filename -> class info
     at_dict = {}
 
     # loop through AT and grab necessary data
@@ -81,8 +78,10 @@ def read_raw_data(save=True):
             if np.isnan(at_class[i]):
                 at_class[i] = 'Unclassified'
         except:
+            # adjust string (based on the input file structure)
             at_class[i] = at_class[i].split('/')[1].replace(" ", '')
 
+    # populate the at_dict
     for i in range(len(at_files)):
         at_dict[at_files[i]] = at_class[i]
 
@@ -90,7 +89,7 @@ def read_raw_data(save=True):
     original_curves = pd.DataFrame(
         columns=['Filename', 'Time', 'Flux', 'Class'])
 
-    # to find out the max light curve length
+    # to find out the max light curve length (used for augmenting smaller light curves)
     max_lc_len = 0
 
     # reads through all light curve files
@@ -101,21 +100,21 @@ def read_raw_data(save=True):
             columns=['Filename', 'Time', 'Filter ID', 'Flux', 'Error', 'Class'])
 
         # read light curve from file
-        df = pd.read_csv(filepath+'data/processed_curves/'+f)
+        df = pd.read_csv(lc_path+f)
 
         # num of timesteps
         num_steps = len(df['relative_time'])
 
         # process filename to be just abreviation ex: 2018evo
         name_split = f.split('_')
-        name_abr = name_split[0]
+        name_abr = name_split[1]
 
         # grab mag and class
         if name_abr == 'SN':
             continue
         classif = modify_class(at_dict[name_abr])
 
-        # add info to original dataframe
+        # add info to original_curves dataframe
         df_dict = {'Filename': name_abr,
                    'Time': df.loc[:, 'relative_time'], 'Flux': df.loc[:, 'tess_flux'], 'Class': classif}
         original_curves = original_curves.append(df_dict, ignore_index=True)
@@ -174,11 +173,15 @@ def read_raw_data(save=True):
                 # add df_dict to dataframe
                 filtered_df = filtered_df.append(df_dict, ignore_index=True)
 
+        # update max_lc_len if we find a longer lc
         if filtered_df.shape[0] > max_lc_len:
             max_lc_len = filtered_df.shape[0]
+
+        # skip the light curve if there was no data
         elif filtered_df.shape[0] == 0:
             continue
 
+        # add light curve to processed light curve DF
         light_curves.append(filtered_df)
 
     # augment data length if needed
@@ -190,6 +193,7 @@ def read_raw_data(save=True):
                        'Flux': mask_val, 'Error': mask_val, 'Class': f.loc[0, 'Class']}
             f = f.append(df_dict, ignore_index=True)
 
+        # update light curve
         light_curves[i] = f
 
     # get classification counts
@@ -201,43 +205,33 @@ def read_raw_data(save=True):
     print('Number of light curves recorded: ', len(light_curves))
     print('Number of timesteps in first light curves',
           len(light_curves[0].loc[:, 'Time']))
-    if save:
-        print("saving raw data...")
-        all_transients.to_pickle(filepath+'data/all_transients.pkl')
-        original_curves.to_pickle(filepath+'data/original_curves.pkl')
-        with open(filepath+'data/light_curves.pkl', "wb") as f:
-            pkl.dump(light_curves, f)
+
+    return light_curves, original_curves, all_transients
 
 
-def load_light_curve_dataframe():
-    print('loading light curve df...')
-    with open(filepath+'data/light_curves.pkl', "rb") as f:
-        light_curves = pkl.load(f)
-    return light_curves
-
-
-def load_original_curves():
-    print('loading original curves...')
-    return pd.read_pickle(filepath+'data/original_curves.pkl')
-
-
-def plot_specific(filename):
+def plot_specific(original_curves, filename):
     """
     Plots the data of a specific light curve
 
     Args:
-        df_type (str): type of dataframe to extract lc from (raw, binned, aug)
-        filename (str): filename abreviation of the light curve to plot
+        original_curves (DataFrame): DataFrame containing light curves before processing
+        filename (str): filename abreviation of the light curve to plot (Ex: '2018fzi')
     """
-    df = load_original_curves()
+    df = original_curves
 
+    # get all names in the DataFrame
     names = df.loc[:, 'Filename']
 
-    for i in range(len(names)):
+    # handle case where filename doesnt exist
+    if filename not in names:
+        return 'Invalid filename: not found in DateFrame'
 
+    # find the index of the file
+    for i in range(len(names)):
         if names[i] == filename:
             indx = i
 
+    # plot the light curve
     plt.figure()
 
     flux = df.loc[indx]['Flux']
@@ -250,13 +244,20 @@ def plot_specific(filename):
 
     plt.show()
 
-    print('indx: ', indx)
 
+def prepare_NN_data(lc):
+    """
+    Turns light curve data into format that is ready to be inputted into neural network model
 
-def prepare_NN_data(save=True):
+    Args:
+        lc (DataFrame): Processed light curve DataFrame
+
+    Returns:
+        prepared_data (Numpy matrix): Matrix of light curves. Shape = # light curves x # timesteps x # features
+    """
 
     # load light curve DF
-    light_curves = load_light_curve_dataframe()
+    light_curves = lc
 
     # array for prepared data
     prepared_data = []
@@ -274,27 +275,6 @@ def prepare_NN_data(save=True):
     prepared_data = np.array(prepared_data)
 
     print('shape of prepared data: ', prepared_data.shape)
-    if save:
-        print('saving prepared data...')
-        np.save(filepath+'data/prepared_data.npy', prepared_data)
     return prepared_data
-
-
-def main():
-
-    # read raw data
-    read_raw_data()
-
-    # plot_specific('raw','2021aaeb')
-    prepare_NN_data()
-    loaded = np.load(filepath+'data/prepared_data.npy', allow_pickle=True)
-
-    print(loaded[0])
-
-
-if __name__ == '__main__':
-    main()
-
-sk  # %%
 
 # %%
