@@ -24,12 +24,12 @@ There are three steps within the pipeline:
 Reads in raw light curve data and classification info and processes the the data.
 
 Processing steps include:
-    - numeric encodings of class
-    - use of TESS/ZTF filter IDs
-    - timestep creation for each filter ID occurance
-    - cut light curves between specific time range
-    - skip light curves with no data
-    - data augmentation so all light curves have same # of timesteps
+- numeric encodings of class
+- use of TESS/ZTF filter IDs
+- timestep creation for each filter ID occurance
+- cut light curves between specific time range
+- skip light curves with no data
+- data augmentation so all light curves have same # of timesteps
     
 
 ## Step 2: Recurrent Variational Autoencoder (NN_model.py)
