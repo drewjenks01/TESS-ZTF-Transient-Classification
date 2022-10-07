@@ -462,7 +462,6 @@ class RVAE:
         labels = np.array([c.loc[0, 'Class'] for c in light_curves])
         data = self.prepared_data
 
-        encoder = self.get_encoder()
         _, _, z = tqdm(encoder.predict(data))
 
         t_sne = TSNE(n_components=2, learning_rate='auto',
