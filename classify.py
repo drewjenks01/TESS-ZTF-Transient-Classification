@@ -155,7 +155,7 @@ class RandomForest:
 
         return rf
 
-    def classify(self, original_curves, filename):
+    def classify(self, rf,original_curves, filename):
         """
         Classifies a specific light curve.
         """
@@ -172,9 +172,6 @@ class RandomForest:
 
             data = self.prepared_data[indx]
             correct = raw_df.loc[indx]['Class']
-
-        # load trained RF
-        rf = self.load_rf()
 
         # reshape
         data = data.reshape(1, self.rvae.num_timesteps, self.rvae.num_feats)
