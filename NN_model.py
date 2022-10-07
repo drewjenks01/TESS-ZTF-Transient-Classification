@@ -446,7 +446,6 @@ class RVAE:
 
         labeled_data = np.array([self.prepared_data[i] for i in indxs])
 
-        encoder = self.get_encoder()
         _, _, z = tqdm(encoder.predict(labeled_data))
 
         t_sne = TSNE(n_components=2, learning_rate='auto',
